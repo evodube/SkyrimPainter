@@ -26,10 +26,10 @@ Here you paint the picture yourself. No assets or code from that mod are used.
 ### 1. Craft your kit (tanning rack)
 | Item | Cost (test values) |
 |---|---|
-| Easel | 1 Leather |
-| Blank Canvas | 1 Leather |
-| Painter's Palette | 1 Leather |
-| Paints | 1 Leather |
+| Easel | 3 Firewood, 2 Leather Strips |
+| Blank Canvas | 2 Linen Wrap, 1 Firewood |
+| Painter's Palette | 1 Firewood |
+| Paints | 1 each: Charcoal, Bone Meal, Red Mountain Flower, Blue Mountain Flower, Dragon's Tongue |
 
 ### 2. Set up the easel
 **Use the Easel in your inventory**: the inventory closes and a preview of the easel follows your aim.

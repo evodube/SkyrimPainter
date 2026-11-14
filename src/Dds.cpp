@@ -129,6 +129,28 @@ namespace Dds
 			}
 		}
 
+		// BC3 (DXT5): colour plus a full alpha channel (a normal map's alpha is its specular / shine)
+		void CompressBC3(const Image& img, std::vector<std::uint8_t>& out)
+		{
+			const int bw = (std::max)(1, (img.w + 3) / 4);
+			const int bh = (std::max)(1, (img.h + 3) / 4);
+			std::uint8_t block[64];
+			std::uint8_t dst[16];
+			for (int by = 0; by < bh; ++by) {
+				for (int bx = 0; bx < bw; ++bx) {
+					for (int py = 0; py < 4; ++py) {
+						const int sy = (std::min)(by * 4 + py, img.h - 1);
+						for (int px = 0; px < 4; ++px) {
+							const int sx = (std::min)(bx * 4 + px, img.w - 1);
+							std::memcpy(&block[(py * 4 + px) * 4], &img.px[(static_cast<std::size_t>(sy) * img.w + sx) * 4], 4);
+						}
+					}
+					stb_compress_dxt_block(dst, block, 1, STB_DXT_HIGHQUAL);
+					out.insert(out.end(), dst, dst + 16);
+				}
+			}
+		}
+
 		void PutU32(std::vector<std::uint8_t>& v, std::uint32_t x)
 		{
 			for (int i = 0; i < 4; ++i) {
@@ -137,8 +159,11 @@ namespace Dds
 		}
 
 		// Classic DX9 DDS header (what Skyrim's loader expects for DXT1 / uncompressed BGRA).
-		std::vector<std::uint8_t> Header(int w, int h, int mips, bool dxt1, std::uint32_t linearSize)
+		std::vector<std::uint8_t> Header(int w, int h, int mips, bool dxt1, std::uint32_t linearSize, bool dxt5 = false)
 		{
+			if (dxt5) {
+				dxt1 = true;  // compressed, like DXT1 - only the FourCC differs
+			}
 			std::vector<std::uint8_t> v;
 			v.reserve(128);
 			v.insert(v.end(), { 'D', 'D', 'S', ' ' });
@@ -156,7 +181,7 @@ namespace Dds
 			PutU32(v, 32);
 			if (dxt1) {
 				PutU32(v, 0x4);  // DDPF_FOURCC
-				v.insert(v.end(), { 'D', 'X', 'T', '1' });
+				v.insert(v.end(), { 'D', 'X', 'T', dxt5 ? '5' : '1' });
 				for (int i = 0; i < 5; ++i) {
 					PutU32(v, 0);
 				}
@@ -336,6 +361,34 @@ namespace Dds
 		}
 		const auto linear = static_cast<std::uint32_t>((std::max)(1, (a_width + 3) / 4) * (std::max)(1, (a_height + 3) / 4) * 8);
 		auto       bytes = Header(a_width, a_height, mips, true, linear);
+		bytes.insert(bytes.end(), data.begin(), data.end());
+		return WriteAtomically(a_out, bytes, a_error);
+	}
+
+	bool ConvertNormalMap(const std::uint8_t* a_rgba, int a_srcW, int a_srcH, int a_width, int a_height, const fs::path& a_out, std::string& a_error)
+	{
+		if (!a_rgba || a_srcW <= 0 || a_srcH <= 0) {
+			a_error = "no pixels";
+			return false;
+		}
+		Image src;
+		src.w = a_srcW;
+		src.h = a_srcH;
+		src.px.assign(a_rgba, a_rgba + static_cast<std::size_t>(a_srcW) * a_srcH * 4);
+		Image level = (a_width == a_srcW && a_height == a_srcH) ? std::move(src) : Fit(std::move(src), a_width, a_height);
+		int   mips = 1;
+		for (int w = a_width, h = a_height; w > 1 || h > 1; w = (std::max)(1, w / 2), h = (std::max)(1, h / 2)) {
+			++mips;
+		}
+		std::vector<std::uint8_t> data;
+		for (int m = 0; m < mips; ++m) {
+			CompressBC3(level, data);
+			if (m + 1 < mips) {
+				level = Half(level);
+			}
+		}
+		const auto linear = static_cast<std::uint32_t>((std::max)(1, (a_width + 3) / 4) * (std::max)(1, (a_height + 3) / 4) * 16);
+		auto       bytes = Header(a_width, a_height, mips, true, linear, true);
 		bytes.insert(bytes.end(), data.begin(), data.end());
 		return WriteAtomically(a_out, bytes, a_error);
 	}

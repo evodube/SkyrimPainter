@@ -26,11 +26,14 @@ namespace Paint
 		{ "Round", 10.0f, 1.0f, 0.65f, 1.0f },
 		{ "Filbert", 19.0f, 1.6f, 0.60f, 1.1f },
 		{ "Wide flat", 34.0f, 3.2f, 0.55f, 1.2f },
+		{ "Fan brush", 26.0f, 2.6f, 0.55f, 1.0f, Kind::Fan },
+		{ "Charcoal", 4.5f, 1.0f, 0.5f, 1.0f, Kind::Charcoal },
+		{ "Palette knife", 16.0f, 3.5f, 0.95f, 1.0f, Kind::Knife },
 	};
 
 	namespace
 	{
-		constexpr int kUndoDepth = 20;
+		constexpr int kUndoDepth = 25;
 		constexpr int kTip = 64;  // tip mask resolution
 
 		std::uint32_t Hash(std::uint32_t x)
@@ -64,12 +67,56 @@ namespace Paint
 			if (!made) {
 				made = true;
 				for (int b = 0; b < kBrushCount; ++b) {
-					auto&     m = tips[b].mask;
+					auto&      m = tips[b].mask;
+					const Kind kind = kBrushes[b].kind;
+					if (kind == Kind::Knife || kind == Kind::Charcoal) {
+						for (int y = 0; y < kTip; ++y) {
+							for (int x = 0; x < kTip; ++x) {
+								const float u = (x + 0.5f) / kTip * 2.0f - 1.0f, v = (y + 0.5f) / kTip * 2.0f - 1.0f;
+								float       val;
+								if (kind == Kind::Knife) {  // the blade: a hard-edged slab, very slightly ragged at its ends
+									val = (1.0f - Smooth(0.9f, 1.0f, std::fabs(u))) * (1.0f - Smooth(0.75f, 1.0f, std::fabs(v)));
+									val *= 0.92f + 0.08f * Rand(b * 7919 + y * 131 + x);
+								} else {  // charcoal: a soft round stick end, dusty and grainy
+									const float r = std::sqrt(u * u + v * v);
+									val = (1.0f - Smooth(0.45f, 1.0f, r)) * (0.55f + 0.45f * Rand(b * 7919 + y * 131 + x));
+								}
+								m[y * kTip + x] = std::clamp(val, 0.0f, 1.0f);
+							}
+						}
+						continue;
+					}
+					if (kind == Kind::Fan) {
+						// a few springy bristles, unevenly spread and of different lengths: broken, feathery marks
+						constexpr int kN = 13;
+						float         pos[kN], len[kN], str[kN], wid[kN];
+						for (int k = 0; k < kN; ++k) {
+							pos[k] = -0.92f + 1.84f * (k + 0.5f) / kN + (Rand(b * 401 + k * 17 + 1) - 0.5f) * 0.12f;
+							len[k] = 0.35f + 0.65f * Rand(b * 401 + k * 17 + 2);
+							str[k] = 0.35f + 0.65f * Rand(b * 401 + k * 17 + 3);
+							wid[k] = 0.02f + 0.03f * Rand(b * 401 + k * 17 + 4);
+						}
+						for (int y = 0; y < kTip; ++y) {
+							for (int x = 0; x < kTip; ++x) {
+								const float u = (x + 0.5f) / kTip * 2.0f - 1.0f, v = (y + 0.5f) / kTip * 2.0f - 1.0f;
+								float       val = 0.0f;
+								for (int k = 0; k < kN; ++k) {
+									const float d = std::fabs(u - pos[k]) / wid[k];
+									if (d < 1.0f && std::fabs(v) < len[k]) {
+										val = std::max(val, str[k] * (1.0f - d * d) * (1.0f - Smooth(len[k] * 0.6f, len[k], std::fabs(v))));
+									}
+								}
+								m[y * kTip + x] = std::clamp(val * (0.85f + 0.15f * Rand(b * 7919 + y * 131 + x)), 0.0f, 1.0f);
+							}
+						}
+						continue;
+					}
+					// the others: many bristles packed close
 					const int bristles = 10 + b * 14;
 					std::vector<float> across(kTip, 0.0f);
 					for (int k = 0; k < bristles; ++k) {
 						const float c = Rand(b * 977 + k * 31 + 1) * 2.0f - 1.0f;   // position across the tip
-						const float w = 0.6f / bristles + Rand(b * 977 + k * 31 + 2) * 1.2f / bristles;
+						const float w = kind == Kind::Fan ? 0.012f + Rand(b * 977 + k * 31 + 2) * 0.02f : 0.6f / bristles + Rand(b * 977 + k * 31 + 2) * 1.2f / bristles;
 						const float s = 0.55f + 0.45f * Rand(b * 977 + k * 31 + 3);
 						for (int i = 0; i < kTip; ++i) {
 							const float u = (i + 0.5f) / kTip * 2.0f - 1.0f;
@@ -131,6 +178,7 @@ namespace Paint
 		m_layers.push_back({ "Underpainting", true, 1.0f, std::vector<std::uint8_t>(static_cast<std::size_t>(a_w) * a_h * 4, 0) });
 		MakeGrain();
 		m_wet.clear();  // a painting you come back to has dried
+		m_height.assign(static_cast<std::size_t>(a_w) * a_h, 0);
 		m_current = 0;
 		m_undo.clear();
 		m_redo.clear();
@@ -275,13 +323,14 @@ namespace Paint
 		}
 		PushUndo(a_i);
 		std::fill(m_layers[a_i].px.begin(), m_layers[a_i].px.end(), 0);
+		std::fill(m_height.begin(), m_height.end(), 0);
 		m_changed = true;
 		RecompositeAll();
 	}
 
 	void Painting::PushUndo(int a_layer)
 	{
-		m_undo.push_back({ a_layer, m_layers[a_layer].px });
+		m_undo.push_back({ a_layer, m_layers[a_layer].px, m_height });
 		while (static_cast<int>(m_undo.size()) > kUndoDepth) {
 			m_undo.pop_front();
 		}
@@ -298,8 +347,9 @@ namespace Paint
 		if (step.layer >= static_cast<int>(m_layers.size())) {
 			return;
 		}
-		m_redo.push_back({ step.layer, std::move(m_layers[step.layer].px) });
+		m_redo.push_back({ step.layer, std::move(m_layers[step.layer].px), std::move(m_height) });
 		m_layers[step.layer].px = std::move(step.px);
+		m_height = std::move(step.height);
 		m_changed = true;
 		RecompositeAll();
 	}
@@ -314,8 +364,9 @@ namespace Paint
 		if (step.layer >= static_cast<int>(m_layers.size())) {
 			return;
 		}
-		m_undo.push_back({ step.layer, std::move(m_layers[step.layer].px) });
+		m_undo.push_back({ step.layer, std::move(m_layers[step.layer].px), std::move(m_height) });
 		m_layers[step.layer].px = std::move(step.px);
+		m_height = std::move(step.height);
 		m_changed = true;
 		RecompositeAll();
 	}
@@ -457,12 +508,14 @@ namespace Paint
 
 	void Painting::Dab(Brush& a_brush, float a_x, float a_y, float a_pressure, float a_dirX, float a_dirY)
 	{
-		const bool lift = m_style.lift;
-		const bool smear = !lift && !a_brush.Loaded();
+		const bool  lift = m_style.lift;
 		if (!lift && a_brush.type < 0) {
 			return;
 		}
 		const auto& bt = kBrushes[std::clamp(a_brush.type, 0, kBrushCount - 1)];
+		const Kind  kind = lift ? Kind::Bristle : bt.kind;
+		const bool  scrape = !lift && kind == Kind::Knife && !a_brush.Loaded();  // a clean knife scrapes paint off
+		const bool  smear = !lift && !scrape && !a_brush.Loaded() && kind != Kind::Charcoal;
 		const float p = std::clamp(a_pressure, 0.05f, 1.0f);
 		// pressing harder splays the bristles; the rag is a soft wad of cloth
 		const float rAcross = lift ? 24.0f * (0.6f + 0.4f * p) : bt.radius * kSizes[std::clamp(a_brush.size, 0, kSizeCount - 1)] * (0.45f + 0.55f * p);
@@ -481,18 +534,26 @@ namespace Paint
 		}
 		auto&      layer = m_layers[m_current].px;
 		const bool lockAlpha = m_layers[m_current].lockAlpha && !lift;
+		if (m_height.size() != static_cast<std::size_t>(m_w) * m_h) {
+			m_height.assign(static_cast<std::size_t>(m_w) * m_h, 0);
+		}
 		const Tip& tip = TipFor(lift ? 1 : a_brush.type);
 		const float ca = a_dirX, sa = a_dirY;  // stroke direction; u runs across it
 
 		// the tip's strength at a pixel, with the canvas weave: a light touch only catches the raised threads
-		const float tooth = (1.0f - Smooth(0.1f, 0.8f, p)) * (smear ? 0.3f : 0.7f);
+		float tooth = (1.0f - Smooth(0.1f, 0.8f, p)) * (smear ? 0.3f : 0.7f);
+		if (kind == Kind::Charcoal) {
+			tooth = 0.85f - 0.25f * p;  // charcoal always catches the weave: grainy, more so with a light hand
+		} else if (kind == Kind::Knife) {
+			tooth = 0.05f;  // the blade rides over the weave: paint sits on top
+		}
 		auto        tipAt = [&](int x, int y) {
             const float px = x + 0.5f - a_x, py = y + 0.5f - a_y;
             const float along = px * ca + py * sa;
             const float across = -px * sa + py * ca;
             const float u = across / rAcross, v = along / rAlong;
-            if (u * u + v * v >= 1.0f) {
-                return 0.0f;
+            if (kind == Kind::Knife ? (std::fabs(u) >= 1.0f || std::fabs(v) >= 1.0f) : u * u + v * v >= 1.0f) {
+                return 0.0f;  // (the blade is square-ended)
             }
             float m;
             if (lift) {  // cloth: soft, uneven
@@ -505,12 +566,19 @@ namespace Paint
                 const float g = m_grain[static_cast<std::size_t>(y) * m_w + x] / 255.0f;
                 m *= 1.0f - tooth * (1.0f - g);
             }
+            if (kind == Kind::Charcoal) {
+                // the surface's tooth: charcoal only catches on its high points, more of them with a heavier hand
+                const std::uint32_t hsh = static_cast<std::uint32_t>(x) * 73856093u ^ static_cast<std::uint32_t>(y) * 19349663u;
+                const float         t = Rand(hsh) * 0.6f + Rand(hsh / 7u + static_cast<std::uint32_t>(x / 3 + y / 3) * 83492791u) * 0.4f;
+                m *= std::clamp((t - (0.6f - 0.55f * p)) * 3.0f, 0.0f, 1.0f);
+            }
             return m;
 		};
 
-		if (lift) {
-			// ---- the rag: wipes paint off this layer, more with a heavier hand
-			const float strength = 0.25f + 0.5f * p;
+		if (lift || scrape) {
+			// ---- the rag: wipes paint off this layer, more with a heavier hand; a clean palette knife
+			// scrapes it off cleanly, back to the canvas
+			const float strength = scrape ? 0.55f + 0.4f * p : 0.25f + 0.5f * p;
 			for (int y = y0; y <= y1; ++y) {
 				for (int x = x0; x <= x1; ++x) {
 					const float m = tipAt(x, y);
@@ -518,7 +586,10 @@ namespace Paint
 						continue;
 					}
 					const std::size_t i = (static_cast<std::size_t>(y) * m_w + x) * 4;
-					layer[i + 3] = static_cast<std::uint8_t>(layer[i + 3] * (1.0f - std::clamp(m * strength, 0.0f, 1.0f)) + 0.5f);
+					const float keep = 1.0f - std::clamp(m * strength, 0.0f, 1.0f);
+					layer[i + 3] = static_cast<std::uint8_t>(layer[i + 3] * keep + 0.5f);
+					auto& hh = m_height[static_cast<std::size_t>(y) * m_w + x];
+					hh = static_cast<std::uint8_t>(hh * keep + 0.5f);  // the rag takes the thickness off too
 				}
 			}
 			++m_dabs;
@@ -528,6 +599,7 @@ namespace Paint
 			const int   w = x1 - x0 + 1, h = y1 - y0 + 1;
 			const float strength = 0.55f + 0.35f * p;
 			std::vector<float> src(static_cast<std::size_t>(w) * h * 4);
+			std::vector<float> srcH(static_cast<std::size_t>(w) * h);
 			for (int y = y0; y <= y1; ++y) {
 				for (int x = x0; x <= x1; ++x) {
 					const int         sx = std::clamp(static_cast<int>(std::lround(x + fromX)), 0, m_w - 1);
@@ -535,6 +607,7 @@ namespace Paint
 					const std::size_t si = (static_cast<std::size_t>(sy) * m_w + sx) * 4;
 					float*            d = &src[(static_cast<std::size_t>(y - y0) * w + (x - x0)) * 4];
 					const float       a = layer[si + 3] / 255.0f;
+					srcH[static_cast<std::size_t>(y - y0) * w + (x - x0)] = m_height[static_cast<std::size_t>(sy) * m_w + sx];
 					d[0] = layer[si] * a;  // premultiplied, so bare canvas pulls the paint thin
 					d[1] = layer[si + 1] * a;
 					d[2] = layer[si + 2] * a;
@@ -560,6 +633,10 @@ namespace Paint
 						layer[i + c] = static_cast<std::uint8_t>(std::clamp(pre / std::max(na, 1e-4f) + 0.5f, 0.0f, 255.0f));
 					}
 					layer[i + 3] = static_cast<std::uint8_t>(std::clamp(na * 255.0f + 0.5f, 0.0f, 255.0f));
+					// the thickness is dragged along too, a little flattened by the brush
+					auto&       hh = m_height[static_cast<std::size_t>(y) * m_w + x];
+					const float sh = srcH[static_cast<std::size_t>(y - y0) * w + (x - x0)];
+					hh = static_cast<std::uint8_t>(std::clamp((hh + (sh - hh) * k) * (1.0f - 0.04f * k) + 0.5f, 0.0f, 255.0f));
 				}
 			}
 		} else {
@@ -582,6 +659,9 @@ namespace Paint
 			}
 			wet /= 5.0f;
 			Rgb deposit = a_brush.color;
+			// charcoal is dry: it never mixes with the paint; a knife lays its paint on cleaner than a brush
+			const float mixK = kind == Kind::Charcoal ? 0.0f : kind == Kind::Knife ? 0.35f : 1.0f;
+			wet *= mixK;
 			if (wet > 0.15f && wsum > 0.0f) {
 				const Rgb u{ static_cast<std::uint8_t>(under[0] / wsum), static_cast<std::uint8_t>(under[1] / wsum), static_cast<std::uint8_t>(under[2] / wsum) };
 				if ((m_dabs & 3) == 0) {
@@ -596,6 +676,13 @@ namespace Paint
 			// flow: paint per dab; body: how far one stroke can cover (a glaze never hides what's under it)
 			const float flow = bt.flow * (0.25f + 0.75f * p);
 			const float cap = m_style.body * 255.0f;
+			// impasto: thick paint and a heavy hand leave paint standing up off the canvas
+			float build = 70.0f * m_style.body * m_style.body * (0.2f + 0.8f * p);
+			if (kind == Kind::Charcoal) {
+				build = 0.0f;  // dust, not paint
+			} else if (kind == Kind::Knife) {
+				build = 150.0f * m_style.body * (0.5f + 0.5f * p);  // a slab of thick paint
+			}
 			const float dr = deposit[0], dg = deposit[1], db = deposit[2];
 			for (int y = y0; y <= y1; ++y) {
 				for (int x = x0; x <= x1; ++x) {
@@ -613,7 +700,9 @@ namespace Paint
 					if (a <= 0.002f) {
 						continue;
 					}
-					m_cover[pi] = static_cast<std::uint8_t>(std::min(255.0f, (cov + a * (1.0f - cov)) * 255.0f + 0.5f));
+					const float covNew = std::min(1.0f, cov + a * (1.0f - cov));
+					m_cover[pi] = static_cast<std::uint8_t>(covNew * 255.0f + 0.5f);
+					const float built = (covNew - cov) * build;  // a stroke adds at most `build` of thickness
 					const std::size_t i = pi * 4;
 					const float       da = layer[i + 3] / 255.0f;
 					if (lockAlpha && da <= 0.0f) {
@@ -625,6 +714,8 @@ namespace Paint
 					layer[i + 1] = static_cast<std::uint8_t>(layer[i + 1] + (dg - layer[i + 1]) * k + 0.5f);
 					layer[i + 2] = static_cast<std::uint8_t>(layer[i + 2] + (db - layer[i + 2]) * k + 0.5f);
 					layer[i + 3] = static_cast<std::uint8_t>(std::clamp(oa * 255.0f + 0.5f, 0.0f, 255.0f));
+					auto& hh = m_height[pi];
+					hh = static_cast<std::uint8_t>(std::min(255.0f, hh + built + 0.5f));
 				}
 			}
 		}
@@ -691,6 +782,9 @@ namespace Paint
 		for (auto& l : m_layers) {
 			l.px = Rotate90(l.px, m_w, m_h, a_clockwise);
 		}
+		if (m_height.size() == static_cast<std::size_t>(m_w) * m_h) {
+			m_height = Rotate90Gray(m_height, m_w, m_h, a_clockwise);
+		}
 		std::swap(m_w, m_h);
 		m_blank = a_newBlank;
 		MakeGrain();
@@ -699,6 +793,91 @@ namespace Paint
 		m_redo.clear();
 		m_changed = true;
 		RecompositeAll();
+	}
+
+	void Painting::SetThickness(std::vector<std::uint8_t> a_height)
+	{
+		if (a_height.size() == static_cast<std::size_t>(m_w) * m_h) {
+			m_height = std::move(a_height);
+		} else {
+			m_height.assign(static_cast<std::size_t>(m_w) * m_h, 0);
+		}
+	}
+
+	std::vector<std::uint8_t> Rotate90Gray(const std::vector<std::uint8_t>& a_px, int a_w, int a_h, bool a_clockwise)
+	{
+		std::vector<std::uint8_t> out(a_px.size());
+		for (int y = 0; y < a_h; ++y) {
+			for (int x = 0; x < a_w; ++x) {
+				const int nx = a_clockwise ? a_h - 1 - y : y;
+				const int ny = a_clockwise ? x : a_w - 1 - x;
+				out[static_cast<std::size_t>(ny) * a_h + nx] = a_px[static_cast<std::size_t>(y) * a_w + x];
+			}
+		}
+		return out;
+	}
+
+	void MakeNormalMap(const std::vector<std::uint8_t>& a_height, int a_w, int a_h, Varnish a_varnish, const NormalStyle& a_style,
+		std::vector<std::uint8_t>& a_out, const Rect* a_rect)
+	{
+		const std::size_t n = static_cast<std::size_t>(a_w) * a_h;
+		if (a_out.size() != n * 4) {
+			a_out.assign(n * 4, 0);
+			a_rect = nullptr;  // the whole thing
+		}
+		const bool haveH = a_height.size() == n;
+		// the surface: the canvas weave (threads every 3 px, as on the blank canvas) where the paint is
+		// thin, plus the paint's own thickness
+		auto surface = [&](int x, int y) {
+			x = std::clamp(x, 0, a_w - 1);
+			y = std::clamp(y, 0, a_h - 1);
+			const float paint = haveH ? a_height[static_cast<std::size_t>(y) * a_w + x] : 0.0f;
+			const float weave = std::sin(x * 2.094f) * std::sin(y * 2.094f) * 5.0f * (1.0f - std::min(1.0f, paint / 50.0f));
+			return paint + weave;
+		};
+		constexpr float kSlope = 0.035f;  // how steep the relief looks
+		int             shine0 = 0;       // specular everywhere (the varnish) ...
+		float           shinePaint = 0.3f;  // ... and from the paint itself, by thickness
+		switch (a_varnish) {
+		case Varnish::Matte:
+			shine0 = 0;
+			shinePaint = 0.0f;
+			break;
+		case Varnish::Satin:
+			shine0 = 100;
+			shinePaint = 0.25f;
+			break;
+		case Varnish::Gloss:
+			shine0 = 200;
+			shinePaint = 0.2f;
+			break;
+		default:
+			break;
+		}
+		const int x0 = a_rect ? std::max(0, a_rect->x0) : 0, x1 = a_rect ? std::min(a_w, a_rect->x1) : a_w;
+		const int y0 = a_rect ? std::max(0, a_rect->y0) : 0, y1 = a_rect ? std::min(a_h, a_rect->y1) : a_h;
+		for (int y = y0; y < y1; ++y) {
+			for (int x = x0; x < x1; ++x) {
+				const float dx = (surface(x + 1, y) - surface(x - 1, y)) * 0.5f * kSlope;
+				const float dy = (surface(x, y + 1) - surface(x, y - 1)) * 0.5f * kSlope;
+				// the normal in (u right, v down, out of the canvas)
+				float       nx = -dx, ny = -dy;
+				const float nz = 1.0f;
+				if (a_style.flipY) {
+					ny = -ny;
+				}
+				if (a_style.swapXY) {
+					std::swap(nx, ny);
+				}
+				const float l = 1.0f / std::sqrt(nx * nx + ny * ny + nz * nz);
+				std::uint8_t* o = &a_out[(static_cast<std::size_t>(y) * a_w + x) * 4];
+				o[0] = static_cast<std::uint8_t>(std::clamp((nx * l * 0.5f + 0.5f) * 255.0f + 0.5f, 0.0f, 255.0f));
+				o[1] = static_cast<std::uint8_t>(std::clamp((ny * l * 0.5f + 0.5f) * 255.0f + 0.5f, 0.0f, 255.0f));
+				o[2] = static_cast<std::uint8_t>(std::clamp((nz * l * 0.5f + 0.5f) * 255.0f + 0.5f, 0.0f, 255.0f));
+				const float paint = haveH ? a_height[static_cast<std::size_t>(y) * a_w + x] : 0.0f;
+				o[3] = static_cast<std::uint8_t>(std::clamp(shine0 + paint * shinePaint, 0.0f, 255.0f));
+			}
+		}
 	}
 
 	std::vector<std::uint8_t> Rotate90(const std::vector<std::uint8_t>& a_px, int a_w, int a_h, bool a_clockwise)

@@ -15,6 +15,9 @@
 #include "Art.h"
 
 #include "Dds.h"
+#include "Overlay.h"
+#include "Paint.h"
+#include "Store.h"
 
 namespace fs = std::filesystem;
 
@@ -257,7 +260,10 @@ namespace Art
 			return false;
 		}
 		textures->SetTexturePath(RE::BSTextureSet::Texture::kDiffuse, a_dds.c_str());
-		textures->SetTexturePath(RE::BSTextureSet::Texture::kNormal, kFlatNormal);
+		// the painting's own relief (impasto, canvas weave, varnish) when it has one
+		std::error_code ec;
+		const auto      normal = NormalPath(a_dds);
+		textures->SetTexturePath(RE::BSTextureSet::Texture::kNormal, fs::exists(DataPath(normal), ec) ? normal.c_str() : kFlatNormal);
 		// The game's own pattern for texture-set swaps: copy the material, give the copy the new
 		// textures, hand it to the shader (which keeps its own cached copy), free ours.
 		auto* copy = static_cast<RE::BSLightingShaderMaterialBase*>(material->Create());
@@ -325,6 +331,19 @@ namespace Art
 			std::string err;
 			bool        ok = false;
 			try {
+				// the relief, from the painting's saved thickness, if it has one
+				const auto      dir = a_png.parent_path();
+				std::error_code nec;
+				if (!fs::exists(DataPath(NormalPath(a_dds)), nec)) {
+					std::vector<std::uint8_t> th;
+					int                       tw = 0, thh = 0;
+					if (Store::LoadThickness(dir, th, tw, thh)) {
+						std::vector<std::uint8_t> nm;
+						Paint::MakeNormalMap(th, tw, thh, static_cast<Paint::Varnish>(Store::LoadVarnish(dir)), ReliefStyle(), nm);
+						std::string nerr;
+						Dds::ConvertNormalMap(nm.data(), tw, thh, a_w, a_h, DataPath(NormalPath(a_dds)), nerr);
+					}
+				}
 				ok = Dds::ConvertPicture(a_png, a_w, a_h, DataPath(a_dds), err);
 			} catch (const std::exception& e) {
 				err = e.what();
@@ -365,9 +384,25 @@ namespace Art
 		return ok;
 	}
 
-	void ConvertAndShow(std::vector<std::uint8_t> a_rgba, int a_srcW, int a_srcH, const std::string& a_dds, int a_w, int a_h, RE::FormID a_ref)
+	std::string NormalPath(const std::string& a_dds)
 	{
-		std::thread([px = std::move(a_rgba), a_srcW, a_srcH, a_dds, a_w, a_h, a_ref] {
+		if (a_dds.size() > 4 && _stricmp(a_dds.c_str() + a_dds.size() - 4, ".dds") == 0) {
+			return a_dds.substr(0, a_dds.size() - 4) + "_n.dds";
+		}
+		return a_dds + "_n.dds";
+	}
+
+	void ConvertAndShow(std::vector<std::uint8_t> a_rgba, int a_srcW, int a_srcH, const std::string& a_dds, int a_w, int a_h, RE::FormID a_ref,
+		std::vector<std::uint8_t> a_normal)
+	{
+		std::thread([px = std::move(a_rgba), nm = std::move(a_normal), a_srcW, a_srcH, a_dds, a_w, a_h, a_ref] {
+			// the relief first: the canvas picks it up when the colour texture is put on
+			if (nm.size() == static_cast<std::size_t>(a_srcW) * a_srcH * 4) {
+				std::string err;
+				if (!Dds::ConvertNormalMap(nm.data(), a_srcW, a_srcH, a_w, a_h, DataPath(NormalPath(a_dds)), err)) {
+					spdlog::warn("Could not write {}: {}", NormalPath(a_dds), err);
+				}
+			}
 			if (!ConvertNow(px.data(), a_srcW, a_srcH, a_dds, a_w, a_h)) {
 				return;
 			}
@@ -413,5 +448,18 @@ namespace Art
 		}
 		std::error_code ec;
 		fs::remove(DataPath(a_dds), ec);
+		fs::remove(DataPath(NormalPath(a_dds)), ec);
+	}
+
+	Paint::NormalStyle ReliefStyle()
+	{
+		static const Paint::NormalStyle style = [] {
+			Paint::NormalStyle s;
+			const auto         ini = Overlay::IniPath();
+			s.swapXY = ::GetPrivateProfileIntA("Studio", "bReliefSwapXY", 1, ini.c_str()) != 0;
+			s.flipY = ::GetPrivateProfileIntA("Studio", "bReliefFlipY", 0, ini.c_str()) != 0;
+			return s;
+		}();
+		return style;
 	}
 }

@@ -30,7 +30,9 @@ namespace Live
 	// The canvas shows the studio's own texture, so every stroke is seen on it as it is painted.
 	// a_dds is the session's own texture on that canvas (Items::ShowLive): only a texture of that name
 	// is ever touched. Call every frame while painting; it hooks up as soon as the game has loaded it.
-	void Attach(std::uint32_t a_canvas, const std::string& a_dds, ID3D11Texture2D* a_tex, ID3D11ShaderResourceView* a_srv);
+	// a_reliefTex / a_reliefSrv: the painting's relief (normal map), lent to the canvas's normal map the same way.
+	void Attach(std::uint32_t a_canvas, const std::string& a_dds, ID3D11Texture2D* a_tex, ID3D11ShaderResourceView* a_srv,
+		ID3D11Texture2D* a_reliefTex = nullptr, ID3D11ShaderResourceView* a_reliefSrv = nullptr);
 	bool Attached();
 	// Stop. a_wait: the painting was saved and the canvas is about to get its new texture - keep showing
 	// ours until it has (no flash of the old picture in between).

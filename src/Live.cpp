@@ -14,6 +14,7 @@
 
 #include "Live.h"
 
+#include "Art.h"
 #include "CanvasGeom.h"
 
 #include <chrono>
@@ -36,7 +37,8 @@ namespace Live
 			ID3D11Texture2D*                      ourTex = nullptr;  // one reference each, held by us
 			ID3D11ShaderResourceView*             ourSrv = nullptr;
 		};
-		std::optional<Patch>                  g_patch;
+		std::optional<Patch>                  g_patch;   // the colour texture
+		std::optional<Patch>                  g_relief;  // the relief (normal map): ridges of paint seen as they are painted
 		bool                                  g_detaching = false;
 		std::chrono::steady_clock::time_point g_detachBy;
 		bool                                  g_wasThirdPerson = false;
@@ -80,12 +82,12 @@ namespace Live
 			return _stricmp(a.c_str(), b.c_str()) == 0;
 		}
 
-		void Restore()
+		void RestoreOne(std::optional<Patch>& a_patch)
 		{
-			if (!g_patch) {
+			if (!a_patch) {
 				return;
 			}
-			auto& p = *g_patch;
+			auto& p = *a_patch;
 			if (p.tex && p.tex->rendererTexture) {
 				auto* rt = p.tex->rendererTexture;
 				if (rt->resourceView == reinterpret_cast<REX::W32::ID3D11ShaderResourceView*>(p.ourSrv)) {
@@ -99,9 +101,51 @@ namespace Live
 			if (p.ourTex) {
 				p.ourTex->Release();
 			}
-			spdlog::info("Live: canvas {:08X} shows its own texture again", p.canvas);
-			g_patch.reset();
+			a_patch.reset();
+		}
+
+		void Restore()
+		{
+			if (g_patch) {
+				spdlog::info("Live: canvas {:08X} shows its own texture again", g_patch->canvas);
+			}
+			RestoreOne(g_patch);
+			RestoreOne(g_relief);
 			g_detaching = false;
+		}
+
+		// Lends our texture to the game's a_tex (one of the canvas's textures, whose path is a_path),
+		// only if a_path is the session's own a_want. Keeps it lent across frames.
+		void Lend(std::optional<Patch>& a_patch, std::uint32_t a_canvas, RE::NiSourceTexture* a_tex, const char* a_path, const std::string& a_want,
+			ID3D11Texture2D* a_ourTex, ID3D11ShaderResourceView* a_ourSrv)
+		{
+			if (a_patch) {
+				// still ours? The game rebuilds the canvas's 3D now and then (it may load the texture anew)
+				if (a_patch->canvas == a_canvas && a_tex == a_patch->tex.get() && a_tex && a_tex->rendererTexture &&
+					a_tex->rendererTexture->resourceView == reinterpret_cast<REX::W32::ID3D11ShaderResourceView*>(a_patch->ourSrv)) {
+					return;
+				}
+				RestoreOne(a_patch);
+			}
+			if (!a_ourTex || !a_ourSrv || !a_tex || !a_tex->rendererTexture || !a_tex->rendererTexture->resourceView) {
+				return;  // not loaded yet
+			}
+			if (!SamePath(a_path, a_want)) {
+				return;  // the canvas isn't showing the session's texture (yet): never touch any other
+			}
+			Patch p;
+			p.canvas = a_canvas;
+			p.tex.reset(a_tex);
+			auto* rt = a_tex->rendererTexture;
+			p.oldRes = rt->texture;
+			p.oldSrv = rt->resourceView;
+			a_ourTex->AddRef();
+			a_ourSrv->AddRef();
+			p.ourTex = a_ourTex;
+			p.ourSrv = a_ourSrv;
+			rt->texture = reinterpret_cast<REX::W32::ID3D11Resource*>(a_ourTex);
+			rt->resourceView = reinterpret_cast<REX::W32::ID3D11ShaderResourceView*>(a_ourSrv);
+			a_patch = std::move(p);
 		}
 
 		RE::NiPoint3 Corner(const RE::NiTransform& a_world, bool a_portrait, int a_i)
@@ -140,7 +184,8 @@ namespace Live
 		return true;
 	}
 
-	void Attach(std::uint32_t a_canvas, const std::string& a_dds, ID3D11Texture2D* a_tex, ID3D11ShaderResourceView* a_srv)
+	void Attach(std::uint32_t a_canvas, const std::string& a_dds, ID3D11Texture2D* a_tex, ID3D11ShaderResourceView* a_srv,
+		ID3D11Texture2D* a_reliefTex, ID3D11ShaderResourceView* a_reliefSrv)
 	{
 		if (!a_tex || !a_srv || a_dds.empty()) {
 			return;
@@ -148,37 +193,21 @@ namespace Live
 		if (g_detaching) {
 			Restore();
 		}
-		auto* geom = CanvasShape(Canvas(a_canvas));
-		auto* material = Material(geom);
-		auto* diffuse = material ? material->diffuseTexture.get() : nullptr;
+		auto* material = Material(CanvasShape(Canvas(a_canvas)));
+		if (!material || !material->textureSet) {
+			RestoreOne(g_patch);
+			RestoreOne(g_relief);
+			return;
+		}
+		const bool had = g_patch.has_value();
+		Lend(g_patch, a_canvas, material->diffuseTexture.get(), material->textureSet->GetTexturePath(RE::BSTextureSet::Texture::kDiffuse), a_dds, a_tex, a_srv);
 		if (g_patch) {
-			// still ours? The game rebuilds the canvas's 3D now and then (it may load the texture anew)
-			if (g_patch->canvas == a_canvas && diffuse == g_patch->tex.get() && diffuse && diffuse->rendererTexture &&
-				diffuse->rendererTexture->resourceView == reinterpret_cast<REX::W32::ID3D11ShaderResourceView*>(g_patch->ourSrv)) {
-				return;
-			}
-			Restore();
+			Lend(g_relief, a_canvas, material->normalTexture.get(), material->textureSet->GetTexturePath(RE::BSTextureSet::Texture::kNormal),
+				Art::NormalPath(a_dds), a_reliefTex, a_reliefSrv);
 		}
-		if (!diffuse || !diffuse->rendererTexture || !diffuse->rendererTexture->resourceView || !material->textureSet) {
-			return;  // not loaded yet
+		if (!had && g_patch) {
+			spdlog::info("Live: painting straight onto canvas {:08X}{}", a_canvas, g_relief ? " (with its relief)" : "");
 		}
-		if (!SamePath(material->textureSet->GetTexturePath(RE::BSTextureSet::Texture::kDiffuse), a_dds)) {
-			return;  // the canvas isn't showing the session's texture (yet): never touch any other
-		}
-		Patch p;
-		p.canvas = a_canvas;
-		p.tex.reset(diffuse);
-		auto* rt = diffuse->rendererTexture;
-		p.oldRes = rt->texture;
-		p.oldSrv = rt->resourceView;
-		a_tex->AddRef();
-		a_srv->AddRef();
-		p.ourTex = a_tex;
-		p.ourSrv = a_srv;
-		rt->texture = reinterpret_cast<REX::W32::ID3D11Resource*>(a_tex);
-		rt->resourceView = reinterpret_cast<REX::W32::ID3D11ShaderResourceView*>(a_srv);
-		g_patch = std::move(p);
-		spdlog::info("Live: painting straight onto canvas {:08X}", a_canvas);
 	}
 
 	bool Attached() { return g_patch.has_value() && !g_detaching; }

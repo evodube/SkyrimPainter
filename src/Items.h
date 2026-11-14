@@ -30,13 +30,17 @@ namespace Items
 	struct SlotView
 	{
 		std::string name;
-		std::string dds;  // game path of its texture
-		bool        portrait = false;
+		std::string           dds;  // game path of its texture
+		bool                  portrait = false;
+		std::filesystem::path dir;  // its folder (flat.png is the picture)
 	};
 	bool GetSlot(int a_slot, SlotView& a_out);  // false if the slot is unused. Any thread.
 	void EnsureSlotTexture(int a_slot);          // re-makes the DDS from the saved picture if it's missing
 	void TakePaintingItem(int a_slot);           // main thread
 	void GivePaintingItem(int a_slot);           // main thread
+	void RenamePainting(int a_slot, std::string a_name);
+	// What a merchant pays: the painting itself (RGBA) and the work in it (-1 = not counted)
+	std::int32_t Appraise(const std::vector<std::uint8_t>& a_flat, int a_w, int a_h, int a_varnish, int a_strokes, int a_seconds);  // any thread: the slot and its item take the new name
 
 	// ---- the easel
 	RE::TESObjectACTI* EaselStandForm();
@@ -78,10 +82,11 @@ namespace Items
 	std::optional<Work> TakeStudioRequest();  // any thread
 	// The studio paints on the canvas in the world: the canvas gets a texture of its own for the session
 	// (a_dds, a new name), made from a_flat; the studio then draws straight into it. Any thread.
-	void ShowLive(RE::ObjectRefHandle a_easel, std::string a_dds, std::vector<std::uint8_t> a_flat, int a_w, int a_h);
+	void ShowLive(RE::ObjectRefHandle a_easel, std::string a_dds, std::vector<std::uint8_t> a_flat, int a_w, int a_h, std::vector<std::uint8_t> a_normal);
 	// After the studio saved the layers to Work::dir (worker thread):
-	void StepAway(RE::ObjectRefHandle a_easel, std::vector<std::uint8_t> a_flat, int a_w, int a_h);
-	void Finish(RE::ObjectRefHandle a_easel, std::string a_name, std::vector<std::uint8_t> a_flat, int a_w, int a_h);
+	// a_normal: the painting's relief and shine (RGBA8, same size as a_flat; empty = flat canvas)
+	void StepAway(RE::ObjectRefHandle a_easel, std::vector<std::uint8_t> a_flat, int a_w, int a_h, std::vector<std::uint8_t> a_normal);
+	void Finish(RE::ObjectRefHandle a_easel, std::string a_name, std::vector<std::uint8_t> a_flat, int a_w, int a_h, std::vector<std::uint8_t> a_normal);
 
 	void WriteString(SKSE::SerializationInterface* a_intfc, const std::string& a_s);
 	bool ReadString(SKSE::SerializationInterface* a_intfc, std::string& a_s);

@@ -8,7 +8,7 @@ Records (local form IDs; the plugin finds them with TESDataHandler::LookupForm(i
   ACTI  0x810 easel standing in the world (empty)
         0x811 / 0x812 canvas on an easel, landscape / portrait (placed with the easel's position and angle)
         0x820 / 0x821 painting on a wall, landscape / portrait
-  COBJ  0x830.. recipes at the tanning rack: 1 Leather each (test values)
+  COBJ  0x830.. recipes at the tanning rack (see RECIPES)
 
 Run tools/convert_models.py first (it writes tools/bounds.json).
 """
@@ -17,7 +17,15 @@ import json, math, os, struct
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PLUGIN = "SkyrimPainter.esp"
 OWN = 0x01000000          # one master (Skyrim.esm) -> our own records are 01xxxxxx in the file
-LEATHER = 0x000DB5D2      # Leather01
+# Skyrim.esm items used in the recipes (IDs checked against UESP)
+FIREWOOD = 0x0006F993
+LEATHER_STRIPS = 0x000800E4
+LINEN_WRAP = 0x00034CD6
+CHARCOAL = 0x00033760         # the charcoal stick (tools)
+BONE_MEAL = 0x00034CDD        # white
+RED_MOUNTAIN_FLOWER = 0x00077E1D
+BLUE_MOUNTAIN_FLOWER = 0x00077E1C
+DRAGONS_TONGUE = 0x000889A2   # yellow
 TANNING_RACK = 0x0007866A  # CraftingTanningRack keyword (the plugin double-checks it at runtime)
 HIGH_POLY_NOTE = 0x00097788  # STAT shown by the book menu (a note) - the plugin closes it straight away
 ITM_BOOK_UP = 0x000C7A54     # SNDR pick-up sound
@@ -105,10 +113,19 @@ def main():
                        sub("YNAM", u32(ITM_BOOK_UP)) + sub("DATA", struct.pack("<If", value, weight)))
         count += 1
 
+    # at the tanning rack: (made item, editor name, [(item, count), ...])
+    RECIPES = [
+        (ID_CANVAS, "Canvas", [(LINEN_WRAP, 2), (FIREWOOD, 1)]),                       # cloth stretched on a frame
+        (ID_EASEL, "Easel", [(FIREWOOD, 3), (LEATHER_STRIPS, 2)]),                     # wood, lashed together
+        (ID_PALETTE, "Palette", [(FIREWOOD, 1)]),                                      # a board of wood
+        (ID_PAINTS, "Paints", [(CHARCOAL, 1), (BONE_MEAL, 1), (RED_MOUNTAIN_FLOWER, 1),  # black, white, red,
+                               (BLUE_MOUNTAIN_FLOWER, 1), (DRAGONS_TONGUE, 1)]),        # blue, yellow pigments
+    ]
     cobj = b""
-    for i, (fid, edid) in enumerate([(ID_CANVAS, "Canvas"), (ID_EASEL, "Easel"), (ID_PALETTE, "Palette"), (ID_PAINTS, "Paints")]):
+    for i, (fid, edid, parts) in enumerate(RECIPES):
+        cnto = b"".join(sub("CNTO", u32(item) + i32(n)) for item, n in parts)
         cobj += record("COBJ", OWN | (ID_RECIPE_FIRST + i),
-                       sub("EDID", zstr("SP_Recipe" + edid)) + sub("COCT", u32(1)) + sub("CNTO", u32(LEATHER) + i32(1)) +
+                       sub("EDID", zstr("SP_Recipe" + edid)) + sub("COCT", u32(len(parts))) + cnto +
                        sub("CNAM", u32(OWN | fid)) + sub("BNAM", u32(TANNING_RACK)) + sub("NAM1", u16(1)))
         count += 1
 

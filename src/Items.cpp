@@ -15,7 +15,9 @@
 #include "Items.h"
 
 #include "Art.h"
+#include "Dds.h"
 #include "Forms.h"
+#include "Paint.h"
 #include "Place.h"
 #include "Store.h"
 
@@ -46,7 +48,13 @@ namespace Items
 			std::string   name;
 			bool          portrait = false;
 			std::uint32_t version = 0;
+			std::int32_t  value = 0;     // what a merchant pays for it, from the work in it (0 = not appraised yet)
+			bool          sold = false;  // sold to a merchant: the slot comes free once the merchant's stock resets
+			float         soldDay = 0.0f;
 		};
+
+		constexpr float kSoldSlotFreeAfterDays = 3.0f;  // merchants restock every 2 days; the sold painting is gone by then
+
 
 		struct Easel
 		{
@@ -113,12 +121,15 @@ namespace Items
 			if (a_slot < 0 || a_slot >= Forms::kPaintingSlots || !g_books[a_slot]) {
 				return;
 			}
-			std::string name;
+			std::string  name;
+			std::int32_t value = 0;
 			{
 				std::lock_guard lk(g_mtx);
 				name = g_slots[a_slot].used ? g_slots[a_slot].name : std::string("Painting");
+				value = g_slots[a_slot].used ? g_slots[a_slot].value : 0;
 			}
 			g_books[a_slot]->fullName = name.c_str();
+			g_books[a_slot]->value = value > 0 ? value : 50;
 		}
 
 		fs::path WorkDir(const std::string& a_id) { return Store::WorkFolder() / Art::FromUtf8(a_id); }
@@ -264,9 +275,40 @@ namespace Items
 		// ---- events
 		class EventSink final :
 			public RE::BSTEventSink<RE::MenuOpenCloseEvent>,
-			public RE::BSTEventSink<RE::TESActivateEvent>
+			public RE::BSTEventSink<RE::TESActivateEvent>,
+			public RE::BSTEventSink<RE::TESContainerChangedEvent>
 		{
 		public:
+			// Selling a painting: it leaves the player while the barter menu is open. Buying it back undoes that.
+			RE::BSEventNotifyControl ProcessEvent(const RE::TESContainerChangedEvent* a_event, RE::BSTEventSource<RE::TESContainerChangedEvent>*) override
+			{
+				constexpr RE::FormID kPlayer = 0x14;
+				if (!a_event || (a_event->oldContainer != kPlayer && a_event->newContainer != kPlayer)) {
+					return RE::BSEventNotifyControl::kContinue;
+				}
+				const int slot = SlotOfBook(RE::TESForm::LookupByID(a_event->baseObj));
+				if (slot < 0) {
+					return RE::BSEventNotifyControl::kContinue;
+				}
+				auto*       ui = RE::UI::GetSingleton();
+				const bool  barter = ui && ui->IsMenuOpen(RE::BarterMenu::MENU_NAME);
+				auto*       cal = RE::Calendar::GetSingleton();
+				const float today = cal ? cal->GetDaysPassed() : 0.0f;
+				std::lock_guard lk(g_mtx);
+				auto&           s = g_slots[slot];
+				if (!s.used) {
+					return RE::BSEventNotifyControl::kContinue;
+				}
+				if (a_event->oldContainer == kPlayer && barter) {
+					s.sold = true;
+					s.soldDay = today;
+					spdlog::info("Sold \"{}\" (slot {}) for about {} gold", s.name, slot + 1, s.value);
+				} else if (a_event->newContainer == kPlayer && s.sold) {
+					s.sold = false;  // bought back
+				}
+				return RE::BSEventNotifyControl::kContinue;
+			}
+
 			RE::BSEventNotifyControl ProcessEvent(const RE::MenuOpenCloseEvent* a_event, RE::BSTEventSource<RE::MenuOpenCloseEvent>*) override
 			{
 				if (!a_event || !a_event->opening) {
@@ -345,7 +387,7 @@ namespace Items
 		{
 			{
 				std::lock_guard lk(g_mtx);
-				if (a_intfc->OpenRecord(kRecordSlots, 1)) {
+				if (a_intfc->OpenRecord(kRecordSlots, 2)) {
 					a_intfc->WriteRecordData(static_cast<std::uint32_t>(g_slots.size()));
 					for (const auto& s : g_slots) {
 						a_intfc->WriteRecordData(static_cast<std::uint8_t>(s.used));
@@ -353,6 +395,9 @@ namespace Items
 						WriteString(a_intfc, s.name);
 						a_intfc->WriteRecordData(static_cast<std::uint8_t>(s.portrait));
 						a_intfc->WriteRecordData(s.version);
+						a_intfc->WriteRecordData(s.value);
+						a_intfc->WriteRecordData(static_cast<std::uint8_t>(s.sold));
+						a_intfc->WriteRecordData(s.soldDay);
 					}
 				}
 				if (a_intfc->OpenRecord(kRecordEasels, 1)) {
@@ -376,7 +421,7 @@ namespace Items
 		{
 			std::uint32_t type = 0, version = 0, length = 0;
 			while (a_intfc->GetNextRecordInfo(type, version, length)) {
-				if (type == kRecordSlots && version == 1) {
+				if (type == kRecordSlots && (version == 1 || version == 2)) {
 					std::uint32_t n = 0;
 					a_intfc->ReadRecordData(n);
 					std::lock_guard lk(g_mtx);
@@ -386,6 +431,14 @@ namespace Items
 						if (a_intfc->ReadRecordData(used) != 1 || !ReadString(a_intfc, s.id) || !ReadString(a_intfc, s.name) ||
 							a_intfc->ReadRecordData(portrait) != 1 || a_intfc->ReadRecordData(s.version) != sizeof(s.version)) {
 							break;
+						}
+						if (version >= 2) {
+							std::uint8_t sold = 0;
+							if (a_intfc->ReadRecordData(s.value) != sizeof(s.value) || a_intfc->ReadRecordData(sold) != 1 ||
+								a_intfc->ReadRecordData(s.soldDay) != sizeof(s.soldDay)) {
+								break;
+							}
+							s.sold = sold != 0;
 						}
 						s.used = used != 0;
 						s.portrait = portrait != 0;
@@ -485,19 +538,69 @@ namespace Items
 			}
 		}
 
+		// General goods merchants buy anything; the food keyword lets innkeepers (and food sellers) buy paintings too.
+		RE::BGSKeyword* food = nullptr;
+		for (auto* kw : dh->GetFormArray<RE::BGSKeyword>()) {
+			if (kw && _stricmp(kw->GetFormEditorID(), "VendorItemFood") == 0) {
+				food = kw;
+				break;
+			}
+		}
+		if (food) {
+			for (auto* book : g_books) {
+				if (book) {
+					book->AddKeyword(food);
+				}
+			}
+		} else {
+			spdlog::warn("VendorItemFood keyword not found - only general goods merchants will buy paintings");
+		}
+
 		if (auto* ui = RE::UI::GetSingleton()) {
 			ui->AddEventSink<RE::MenuOpenCloseEvent>(&g_sink);
 		}
 		if (auto* events = RE::ScriptEventSourceHolder::GetSingleton()) {
 			events->AddEventSink<RE::TESActivateEvent>(&g_sink);
+			events->AddEventSink<RE::TESContainerChangedEvent>(&g_sink);
 		}
 		return ok;
 	}
 
 	void OnGameLoaded()
 	{
+		std::vector<std::pair<int, std::string>> unpriced;  // paintings from before selling existed
+		{
+			std::lock_guard lk(g_mtx);
+			for (int i = 0; i < Forms::kPaintingSlots; ++i) {
+				if (g_slots[i].used && g_slots[i].value <= 0) {
+					unpriced.emplace_back(i, g_slots[i].id);
+				}
+			}
+		}
 		for (int i = 0; i < Forms::kPaintingSlots; ++i) {
 			NameBook(i);
+		}
+		if (!unpriced.empty()) {
+			std::thread([unpriced] {
+				for (const auto& [slot, id] : unpriced) {
+					std::vector<std::uint8_t> flat;
+					int                       w = 0, h = 0;
+					const auto                dir = SlotDir(id);
+					int                       strokes = -1, seconds = -1;
+					Store::LoadEffort(dir, strokes, seconds);
+					const std::int32_t value = Store::LoadFlat(dir, flat, w, h) ? Appraise(flat, w, h, Store::LoadVarnish(dir), strokes, seconds) : 30;
+					SKSE::GetTaskInterface()->AddTask([slot, id, value] {
+						{
+							std::lock_guard lk(g_mtx);
+							if (!g_slots[slot].used || g_slots[slot].id != id) {
+								return;
+							}
+							g_slots[slot].value = value;
+						}
+						NameBook(slot);
+					});
+				}
+			}).detach();
 		}
 		std::vector<Easel> easels;
 		{
@@ -530,7 +633,27 @@ namespace Items
 		a_out.name = s.name;
 		a_out.portrait = s.portrait;
 		a_out.dds = SlotDds(s);
+		a_out.dir = SlotDir(s.id);
 		return true;
+	}
+
+	void RenamePainting(int a_slot, std::string a_name)
+	{
+		while (!a_name.empty() && std::isspace(static_cast<unsigned char>(a_name.back()))) {
+			a_name.pop_back();
+		}
+		if (a_name.empty() || a_slot < 0 || a_slot >= Forms::kPaintingSlots) {
+			return;
+		}
+		{
+			std::lock_guard lk(g_mtx);
+			if (!g_slots[a_slot].used) {
+				return;
+			}
+			g_slots[a_slot].name = a_name;  // kept in the co-save with the slot
+		}
+		SKSE::GetTaskInterface()->AddTask([a_slot] { NameBook(a_slot); });
+		spdlog::info("Items: painting {} renamed to \"{}\"", a_slot, a_name);
 	}
 
 	void EnsureSlotTexture(int a_slot)
@@ -647,7 +770,15 @@ namespace Items
 				auto flat = std::make_shared<std::vector<std::uint8_t>>();
 				int  w = 0, h = 0;
 				const bool haveFlat = Store::LoadFlat(dir, *flat, w, h);
-				WithEasel(a_easel, [toPortrait, haveFlat, flat, w, h](RE::TESObjectREFR* a_stand, Easel& e) {
+				auto       relief = std::make_shared<std::vector<std::uint8_t>>();
+				{
+					std::vector<std::uint8_t> th;
+					int                       tw = 0, thh = 0;
+					if (haveFlat && Store::LoadThickness(dir, th, tw, thh) && tw == w && thh == h) {
+						Paint::MakeNormalMap(th, tw, thh, static_cast<Paint::Varnish>(Store::LoadVarnish(dir)), Art::ReliefStyle(), *relief);
+					}
+				}
+				WithEasel(a_easel, [toPortrait, haveFlat, flat, relief, w, h](RE::TESObjectREFR* a_stand, Easel& e) {
 					DeleteRef(e.canvas);
 					e.portrait = toPortrait;
 					e.canvas = SpawnCanvas(a_stand, toPortrait);
@@ -655,7 +786,8 @@ namespace Items
 					e.wipDds.clear();
 					if (haveFlat) {
 						e.wipDds = fmt::format("textures\\SkyrimPainter\\InProgress\\{}_{}.dds", e.workId, Art::NewId());
-						Art::ConvertAndShow(std::move(*flat), w, h, e.wipDds, toPortrait ? kWipShort : kWipLong, toPortrait ? kWipLong : kWipShort, e.canvas);
+						Art::ConvertAndShow(std::move(*flat), w, h, e.wipDds, toPortrait ? kWipShort : kWipLong, toPortrait ? kWipLong : kWipShort, e.canvas,
+							std::move(*relief));
 					}
 				});
 			}).detach();
@@ -747,10 +879,11 @@ namespace Items
 		return out;
 	}
 
-	void StepAway(RE::ObjectRefHandle a_easel, std::vector<std::uint8_t> a_flat, int a_w, int a_h)
+	void StepAway(RE::ObjectRefHandle a_easel, std::vector<std::uint8_t> a_flat, int a_w, int a_h, std::vector<std::uint8_t> a_normal)
 	{
 		auto flat = std::make_shared<std::vector<std::uint8_t>>(std::move(a_flat));
-		WithEasel(a_easel, [flat, a_w, a_h](RE::TESObjectREFR*, Easel& e) {
+		auto relief = std::make_shared<std::vector<std::uint8_t>>(std::move(a_normal));
+		WithEasel(a_easel, [flat, relief, a_w, a_h](RE::TESObjectREFR*, Easel& e) {
 			if (!e.canvas) {
 				return;
 			}
@@ -759,28 +892,32 @@ namespace Items
 			e.wipDds = fmt::format("textures\\SkyrimPainter\\InProgress\\{}_{}.dds", e.workId, Art::NewId());
 			e.painted = true;
 			const bool portrait = a_h > a_w;
-			Art::ConvertAndShow(std::move(*flat), a_w, a_h, e.wipDds, portrait ? kWipShort : kWipLong, portrait ? kWipLong : kWipShort, e.canvas);
+			Art::ConvertAndShow(std::move(*flat), a_w, a_h, e.wipDds, portrait ? kWipShort : kWipLong, portrait ? kWipLong : kWipShort, e.canvas,
+				std::move(*relief));
 		});
 	}
 
-	void ShowLive(RE::ObjectRefHandle a_easel, std::string a_dds, std::vector<std::uint8_t> a_flat, int a_w, int a_h)
+	void ShowLive(RE::ObjectRefHandle a_easel, std::string a_dds, std::vector<std::uint8_t> a_flat, int a_w, int a_h, std::vector<std::uint8_t> a_normal)
 	{
 		auto flat = std::make_shared<std::vector<std::uint8_t>>(std::move(a_flat));
-		WithEasel(a_easel, [flat, dds = std::move(a_dds), a_w, a_h](RE::TESObjectREFR*, Easel& e) {
+		auto relief = std::make_shared<std::vector<std::uint8_t>>(std::move(a_normal));
+		WithEasel(a_easel, [flat, relief, dds = std::move(a_dds), a_w, a_h](RE::TESObjectREFR*, Easel& e) {
 			if (!e.canvas) {
 				return;
 			}
 			DeleteTextureLater(e.wipDds);
 			e.wipDds = dds;  // unique to this session: nothing else in the game uses it
 			const bool portrait = a_h > a_w;
-			Art::ConvertAndShow(std::move(*flat), a_w, a_h, e.wipDds, portrait ? kWipShort : kWipLong, portrait ? kWipLong : kWipShort, e.canvas);
+			Art::ConvertAndShow(std::move(*flat), a_w, a_h, e.wipDds, portrait ? kWipShort : kWipLong, portrait ? kWipLong : kWipShort, e.canvas,
+				std::move(*relief));
 		});
 	}
 
-	void Finish(RE::ObjectRefHandle a_easel, std::string a_name, std::vector<std::uint8_t> a_flat, int a_w, int a_h)
+	void Finish(RE::ObjectRefHandle a_easel, std::string a_name, std::vector<std::uint8_t> a_flat, int a_w, int a_h, std::vector<std::uint8_t> a_normal)
 	{
 		auto flat = std::make_shared<std::vector<std::uint8_t>>(std::move(a_flat));
-		SKSE::GetTaskInterface()->AddTask([a_easel, name = std::move(a_name), flat, a_w, a_h] {
+		auto relief = std::make_shared<std::vector<std::uint8_t>>(std::move(a_normal));
+		SKSE::GetTaskInterface()->AddTask([a_easel, name = std::move(a_name), flat, relief, a_w, a_h] {
 			auto stand = a_easel.get();
 			if (!stand) {
 				return;
@@ -805,8 +942,25 @@ namespace Items
 						}
 					}
 				}
+				if (slot < 0) {  // a painting sold days ago is gone from the merchant's stock: its slot can be reused
+					auto*       cal = RE::Calendar::GetSingleton();
+					const float today = cal ? cal->GetDaysPassed() : 0.0f;
+					auto*       player = RE::PlayerCharacter::GetSingleton();
+					for (int i = 0; i < Forms::kPaintingSlots; ++i) {
+						const auto& o = g_slots[i];
+						if (o.used && o.sold && today - o.soldDay >= kSoldSlotFreeAfterDays && !Place::SlotHung(i) &&
+							!(player && g_books[i] && player->GetItemCount(g_books[i]) > 0)) {
+							spdlog::info("Slot {} (\"{}\", sold) is reused", i + 1, o.name);
+							DeleteTextureLater(SlotDds(o));
+							std::thread([dir = SlotDir(o.id)] { Store::RemoveDoc(dir); }).detach();
+							g_slots[i] = Slot{};
+							slot = i;
+							break;
+						}
+					}
+				}
 				if (slot < 0) {
-					Art::Notify("You have 50 paintings already - scrape one off at an easel to finish another");
+					Art::Notify("You have 50 paintings already - sell one or scrape one off at an easel to finish another");
 					return;
 				}
 				s = g_slots[slot];
@@ -817,6 +971,7 @@ namespace Items
 				}
 				s.name = name.empty() ? std::string("Untitled") : name;
 				s.portrait = a_h > a_w;
+				s.sold = false;
 				++s.version;
 				g_slots[slot] = s;     // reserved now
 				it->second = Easel{};  // the easel stands empty again
@@ -827,11 +982,27 @@ namespace Items
 			// files: the layers move to the painting's own folder, the DDS is written at full size
 			const auto work = WorkDir(e.workId), dest = SlotDir(s.id);
 			const auto dds = SlotDds(s);
-			std::thread([work, dest, dds, flat, a_w, a_h, slot, s] {
+			std::thread([work, dest, dds, flat, relief, a_w, a_h, slot, s] {
 				Store::CopyDoc(work, dest);
 				Store::RemoveDoc(work);
+				if (relief->size() == static_cast<std::size_t>(a_w) * a_h * 4) {  // the relief and varnish, before the colour
+					std::string err;
+					if (!Dds::ConvertNormalMap(relief->data(), a_w, a_h, a_w, a_h, Art::DataPath(Art::NormalPath(dds)), err)) {
+						spdlog::warn("Could not write the relief of {}: {}", dds, err);
+					}
+				}
 				Art::ConvertNow(flat->data(), a_w, a_h, dds, a_w, a_h);
-				SKSE::GetTaskInterface()->AddTask([slot, s] {
+				int strokes = -1, seconds = -1;
+				Store::LoadEffort(dest, strokes, seconds);
+				const std::int32_t value = Appraise(*flat, a_w, a_h, Store::LoadVarnish(dest), strokes, seconds);
+				SKSE::GetTaskInterface()->AddTask([slot, s, value] {
+					{
+						std::lock_guard lk(g_mtx);
+						if (g_slots[slot].used && g_slots[slot].id == s.id) {
+							g_slots[slot].value = value;
+						}
+					}
+					NameBook(slot);
 					GivePaintingItem(slot);
 					Place::RefreshSlot(slot);
 					spdlog::info("Finished \"{}\" (slot {}, {})", s.name, slot + 1, SlotDds(s));
@@ -839,6 +1010,71 @@ namespace Items
 				});
 			}).detach();
 		});
+	}
+
+	// What a painting is worth: how much of the canvas is painted, how much is going on in it, how many colours it
+	// uses - and how long it was worked on, and with how many strokes.
+	std::int32_t Appraise(const std::vector<std::uint8_t>& a_flat, int a_w, int a_h, int a_varnish, int a_strokes, int a_seconds)
+	{
+		if (a_w <= 0 || a_h <= 0 || a_flat.size() < static_cast<std::size_t>(a_w) * a_h * 4) {
+			return 5;
+		}
+		const int step = (std::max)(1, (std::max)(a_w, a_h) / 256);
+		auto      px = [&](int x, int y) { return &a_flat[(static_cast<std::size_t>(y) * a_w + x) * 4]; };
+		auto      lum = [](const std::uint8_t* p) { return 0.3f * p[0] + 0.59f * p[1] + 0.11f * p[2]; };
+		std::array<int, 40> bins{};
+		double              grad = 0.0;
+		int                 samples = 0, covered = 0;
+		for (int y = 0; y + step < a_h; y += step) {
+			for (int x = 0; x + step < a_w; x += step) {
+				const auto* p = px(x, y);
+				++samples;
+				// the bare primed canvas is about (248, 247, 244)
+				if (std::abs(p[0] - 248) + std::abs(p[1] - 247) + std::abs(p[2] - 244) < 24) {
+					continue;
+				}
+				++covered;
+				grad += std::fabs(lum(p) - lum(px(x + step, y))) + std::fabs(lum(p) - lum(px(x, y + step)));
+				const int mx = (std::max)({ p[0], p[1], p[2] }), mn = (std::min)({ p[0], p[1], p[2] });
+				if (mx - mn < 24) {
+					++bins[36 + (std::min)(3, mx / 64)];  // greys: four shades
+				} else {
+					float h = 0.0f;
+					if (mx == p[0]) {
+						h = std::fmod(static_cast<float>(p[1] - p[2]) / (mx - mn) + 6.0f, 6.0f);
+					} else if (mx == p[1]) {
+						h = static_cast<float>(p[2] - p[0]) / (mx - mn) + 2.0f;
+					} else {
+						h = static_cast<float>(p[0] - p[1]) / (mx - mn) + 4.0f;
+					}
+					++bins[(std::min)(11, static_cast<int>(h * 2.0f)) * 3 + (std::min)(2, mx / 86)];  // 12 hues x 3 values
+				}
+			}
+		}
+		if (samples == 0 || covered == 0) {
+			return 5;
+		}
+		const float cover = static_cast<float>(covered) / samples;
+		const float detail = std::clamp(static_cast<float>(grad / covered) / 30.0f, 0.0f, 1.0f);
+		int         used = 0;
+		for (int b : bins) {
+			used += b * 300 >= covered ? 1 : 0;  // at least a third of a percent of the paint
+		}
+		const float variety = std::clamp(used / 16.0f, 0.0f, 1.0f);
+		float       value = 10.0f + cover * (30.0f + 170.0f * detail + 110.0f * variety);
+		if (a_varnish > 0) {
+			value *= 1.1f;  // a varnished painting is a finished painting
+		}
+		// ...and the work that went into it: time spent actually painting and the strokes it took. Both have to be
+		// there, so scribbling fast or leaving the studio open doesn't pay. Full price at about 45 minutes and 500 strokes.
+		if (a_strokes >= 0 && a_seconds >= 0) {
+			const float timeF = std::clamp(a_seconds / (45.0f * 60.0f), 0.0f, 1.0f);
+			const float strokeF = std::clamp(a_strokes / 500.0f, 0.0f, 1.0f);
+			value = 5.0f + (value - 5.0f) * (std::min)(timeF, strokeF);  // the smaller: spamming strokes fast earns little
+		} else {
+			value *= 0.6f;  // painted before the work was counted
+		}
+		return static_cast<std::int32_t>(std::lround(value));
 	}
 
 	void WriteString(SKSE::SerializationInterface* a_intfc, const std::string& a_s)

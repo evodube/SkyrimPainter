@@ -42,6 +42,11 @@ namespace Dds
 	bool ConvertPixels(const std::uint8_t* a_rgba, int a_srcW, int a_srcH, int a_width, int a_height,
 		const std::filesystem::path& a_out, std::string& a_error);
 
+	// A normal map (RGBA8: xyz in RGB, specular / shine in A), resized to a_width x a_height, full mip
+	// chain, BC3 (DXT5) so the alpha is kept. Thread-safe.
+	bool ConvertNormalMap(const std::uint8_t* a_rgba, int a_srcW, int a_srcH, int a_width, int a_height,
+		const std::filesystem::path& a_out, std::string& a_error);
+
 	// Writes a small flat (128,128,255) normal map, used when the mesh's own canvas normal map is missing.
 	bool WriteFlatNormal(const std::filesystem::path& a_out);
 }

@@ -14,6 +14,8 @@
 
 #pragma once
 
+#include "Paint.h"
+
 // Keeps painted textures on the "SPCanvas" shape of our easels and framed paintings: converts
 // pictures to DDS in the background, puts the texture on as soon as a reference's 3D exists, and
 // puts it back whenever the game rebuilds the 3D (cell loads, moves).
@@ -44,7 +46,11 @@ namespace Art
 	void EnsureFromPng(const std::string& a_dds, const std::filesystem::path& a_png, int a_w, int a_h);
 	// Converts pixels (RGBA8, a_srcW x a_srcH) to a_dds (a_w x a_h) in the background, then shows it on a_ref
 	// (0 = none) and on every reference already showing a_dds. Any thread.
-	void ConvertAndShow(std::vector<std::uint8_t> a_rgba, int a_srcW, int a_srcH, const std::string& a_dds, int a_w, int a_h, RE::FormID a_ref);
+	// a_normal (optional, RGBA8 a_srcW x a_srcH): the painting's relief and shine, written first as NormalPath(a_dds).
+	void ConvertAndShow(std::vector<std::uint8_t> a_rgba, int a_srcW, int a_srcH, const std::string& a_dds, int a_w, int a_h, RE::FormID a_ref,
+		std::vector<std::uint8_t> a_normal = {});
+	// A painting texture's relief texture ("x.dds" -> "x_n.dds"); used on the canvas whenever it exists.
+	std::string NormalPath(const std::string& a_dds);
 	// Same, but blocking (call from a worker thread). True when the texture was written.
 	bool ConvertNow(const std::uint8_t* a_rgba, int a_srcW, int a_srcH, const std::string& a_dds, int a_w, int a_h);
 	bool IsReady(const std::string& a_dds);
@@ -54,6 +60,9 @@ namespace Art
 	void RegisterEvents();
 	// Puts a texture on a reference's canvas right now (main thread). Used by the placement preview.
 	bool ApplyNow(RE::TESObjectREFR* a_ref, const std::string& a_dds);
+
+	// How the relief textures are laid out for the game ([Studio] bReliefSwapXY / bReliefFlipY in the INI).
+	Paint::NormalStyle ReliefStyle();
 
 	// Deletes a texture file (when nothing uses it any more). Any thread.
 	void DeleteTexture(const std::string& a_dds);

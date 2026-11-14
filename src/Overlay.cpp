@@ -240,6 +240,13 @@ namespace Overlay
 			case 0x32: return ImGuiKey_M;      // studio: look at the painting in a mirror
 			case 0x0B: return ImGuiKey_0;      // studio: Ctrl+0 fits the canvas again
 			case 0x3B: return ImGuiKey_F1;     // studio: the painter's guide
+			case 0x02: return ImGuiKey_1;      // studio: brushes 1-4
+			case 0x03: return ImGuiKey_2;
+			case 0x04: return ImGuiKey_3;
+			case 0x05: return ImGuiKey_4;
+			case 0x06: return ImGuiKey_5;
+			case 0x07: return ImGuiKey_6;
+			case 0x08: return ImGuiKey_7;
 			default: return ImGuiKey_None;
 			}
 		}

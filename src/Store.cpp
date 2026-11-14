@@ -30,12 +30,12 @@ namespace Store
 	{
 		std::mutex g_mtx;  // one save / copy / rotate at a time
 
-		bool WritePng(const fs::path& a_path, const std::uint8_t* a_px, int a_w, int a_h, std::string& a_error)
+		bool WritePng(const fs::path& a_path, const std::uint8_t* a_px, int a_w, int a_h, std::string& a_error, int a_channels = 4)
 		{
 			auto tmp = a_path;
 			tmp += L".tmp";
 			const auto utf8 = Art::ToUtf8(tmp);
-			if (!stbi_write_png(utf8.c_str(), a_w, a_h, 4, a_px, a_w * 4)) {
+			if (!stbi_write_png(utf8.c_str(), a_w, a_h, a_channels, a_px, a_w * a_channels)) {
 				a_error = "could not write " + utf8;
 				return false;
 			}
@@ -46,15 +46,15 @@ namespace Store
 			return true;
 		}
 
-		bool ReadPng(const fs::path& a_path, std::vector<std::uint8_t>& a_px, int& a_w, int& a_h)
+		bool ReadPng(const fs::path& a_path, std::vector<std::uint8_t>& a_px, int& a_w, int& a_h, int a_channels = 4)
 		{
 			int  n = 0;
 			auto utf8 = Art::ToUtf8(a_path);
-			auto* p = stbi_load(utf8.c_str(), &a_w, &a_h, &n, 4);
+			auto* p = stbi_load(utf8.c_str(), &a_w, &a_h, &n, a_channels);
 			if (!p) {
 				return false;
 			}
-			a_px.assign(p, p + static_cast<std::size_t>(a_w) * a_h * 4);
+			a_px.assign(p, p + static_cast<std::size_t>(a_w) * a_h * a_channels);
 			stbi_image_free(p);
 			return true;
 		}
@@ -91,7 +91,50 @@ namespace Store
 				return false;
 			}
 		}
+		// the paint's thickness (impasto) and the varnish
+		if (a_doc.thickness.size() == static_cast<std::size_t>(a_doc.w) * a_doc.h) {
+			if (!WritePng(a_dir / L"thickness.png", a_doc.thickness.data(), a_doc.w, a_doc.h, a_error, 1)) {
+				return false;
+			}
+		} else {
+			fs::remove(a_dir / L"thickness.png", ec);
+		}
+		{
+			std::ofstream out(a_dir / L"meta.txt", std::ios::binary | std::ios::trunc);
+			out << "varnish=" << a_doc.varnish << "\n";
+			out << "strokes=" << a_doc.strokes << "\n";
+			out << "seconds=" << a_doc.seconds << "\n";
+		}
 		return WritePng(a_dir / L"flat.png", a_flat.data(), a_doc.w, a_doc.h, a_error);
+	}
+
+	bool LoadThickness(const fs::path& a_dir, std::vector<std::uint8_t>& a_px, int& a_w, int& a_h)
+	{
+		return fs::exists(a_dir / L"thickness.png") && ReadPng(a_dir / L"thickness.png", a_px, a_w, a_h, 1);
+	}
+
+	int LoadVarnish(const fs::path& a_dir)
+	{
+		std::ifstream in(a_dir / L"meta.txt", std::ios::binary);
+		for (std::string line; std::getline(in, line);) {
+			if (line.rfind("varnish=", 0) == 0) {
+				return std::clamp(std::atoi(line.c_str() + 8), 0, 3);
+			}
+		}
+		return 0;
+	}
+
+	void LoadEffort(const fs::path& a_dir, int& a_strokes, int& a_seconds)
+	{
+		a_strokes = a_seconds = -1;
+		std::ifstream in(a_dir / L"meta.txt", std::ios::binary);
+		for (std::string line; std::getline(in, line);) {
+			if (line.rfind("strokes=", 0) == 0) {
+				a_strokes = std::max(0, std::atoi(line.c_str() + 8));
+			} else if (line.rfind("seconds=", 0) == 0) {
+				a_seconds = std::max(0, std::atoi(line.c_str() + 8));
+			}
+		}
 	}
 
 	std::optional<Doc> LoadDoc(const fs::path& a_dir)
@@ -143,6 +186,12 @@ namespace Store
 		if (doc.layers.empty()) {
 			return std::nullopt;
 		}
+		int tw = 0, th = 0;
+		if (!fs::exists(a_dir / L"thickness.png") || !ReadPng(a_dir / L"thickness.png", doc.thickness, tw, th, 1) || tw != doc.w || th != doc.h) {
+			doc.thickness.clear();
+		}
+		doc.varnish = LoadVarnish(a_dir);
+		LoadEffort(a_dir, doc.strokes, doc.seconds);
 		return doc;
 	}
 
@@ -187,6 +236,9 @@ namespace Store
 		}
 		for (auto& l : doc->layers) {
 			l.px = Paint::Rotate90(l.px, doc->w, doc->h, a_clockwise);
+		}
+		if (doc->thickness.size() == static_cast<std::size_t>(doc->w) * doc->h) {
+			doc->thickness = Paint::Rotate90Gray(doc->thickness, doc->w, doc->h, a_clockwise);
 		}
 		std::vector<std::uint8_t> flat;
 		int                       fw = 0, fh = 0;
