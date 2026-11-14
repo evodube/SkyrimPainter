@@ -78,7 +78,7 @@ namespace Menus
 			if (Store::LoadFlat(v.dir, px, w, h) && w > 0 && h > 0) {
 				// shrink to 160 px across, averaging the pixels each one covers
 				const int tw = std::min(160, w), th = std::max(1, h * tw / w);
-				std::vector<std::uint8_t> small(static_cast<std::size_t>(tw) * th * 4);
+				std::vector<std::uint8_t> thumb(static_cast<std::size_t>(tw) * th * 4);
 				for (int y = 0; y < th; ++y) {
 					for (int x = 0; x < tw; ++x) {
 						const int x0 = x * w / tw, x1 = std::max(x0 + 1, (x + 1) * w / tw);
@@ -94,11 +94,11 @@ namespace Menus
 							}
 						}
 						for (int c = 0; c < 4; ++c) {
-							small[(static_cast<std::size_t>(y) * tw + x) * 4 + c] = static_cast<std::uint8_t>(sum[c] / std::max(1u, n));
+							thumb[(static_cast<std::size_t>(y) * tw + x) * 4 + c] = static_cast<std::uint8_t>(sum[c] / std::max(1u, n));
 						}
 					}
 				}
-				t.srv = Overlay::MakeSRV(small.data(), tw, th);
+				t.srv = Overlay::MakeSRV(thumb.data(), tw, th);
 				t.w = tw;
 				t.h = th;
 			}

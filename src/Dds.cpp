@@ -181,7 +181,7 @@ namespace Dds
 			PutU32(v, 32);
 			if (dxt1) {
 				PutU32(v, 0x4);  // DDPF_FOURCC
-				v.insert(v.end(), { 'D', 'X', 'T', dxt5 ? '5' : '1' });
+				v.insert(v.end(), { std::uint8_t('D'), std::uint8_t('X'), std::uint8_t('T'), std::uint8_t(dxt5 ? '5' : '1') });
 				for (int i = 0; i < 5; ++i) {
 					PutU32(v, 0);
 				}
