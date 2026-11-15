@@ -48,12 +48,22 @@ namespace Items
 			std::string   name;
 			bool          portrait = false;
 			std::uint32_t version = 0;
-			std::int32_t  value = 0;     // what a merchant pays for it, from the work in it (0 = not appraised yet)
-			bool          sold = false;  // sold to a merchant: the slot comes free once the merchant's stock resets
-			float         soldDay = 0.0f;
+			std::int32_t  value = 0;  // what a merchant pays for it, from the work in it (0 = not appraised yet)
+			// Where the painting item is when it isn't with the player: a container or a dropped reference.
+			// 0 = with the player (or hung, or on an easel); kNowhere = it left and went nowhere we know of.
+			RE::FormID    where = 0;
 		};
 
-		constexpr float kSoldSlotFreeAfterDays = 3.0f;  // merchants restock every 2 days; the sold painting is gone by then
+		constexpr RE::FormID kNowhere = 0xFFFFFFFF;
+		constexpr RE::FormID kPlayerID = 0x14;
+
+		// Paintings that are gone: their files are deleted when the game is next saved, so loading without
+		// saving still finds them.
+		struct Gone
+		{
+			std::string id, dds;
+		};
+		std::vector<Gone> g_gone;  // g_mtx
 
 
 		struct Easel
@@ -130,6 +140,103 @@ namespace Items
 			}
 			g_books[a_slot]->fullName = name.c_str();
 			g_books[a_slot]->value = value > 0 ? value : 50;
+		}
+
+		fs::path SlotDir(const std::string& a_id);
+		void     DeleteTextureLater(std::string a_dds);
+
+		// The painting is gone for good: its slot comes free, its files go when the game is next saved. Main thread.
+		void Forget(int a_slot, bool a_sold)
+		{
+			Slot s;
+			{
+				std::lock_guard lk(g_mtx);
+				s = g_slots[a_slot];
+				if (!s.used) {
+					return;
+				}
+				g_gone.push_back({ s.id, SlotDds(s) });
+				g_slots[a_slot] = Slot{};
+			}
+			NameBook(a_slot);
+			spdlog::info("\"{}\" (slot {}) is gone{}", s.name, a_slot + 1, a_sold ? " - sold" : "");
+			if (a_sold) {
+				Art::Notify(fmt::format("Sold \"{}\"", s.name));
+			}
+		}
+
+		std::int32_t CountIn(RE::TESObjectREFR* a_ref, RE::TESBoundObject* a_item)
+		{
+			if (!a_ref || !a_item) {
+				return 0;
+			}
+			const auto counts = a_ref->GetInventoryCounts([a_item](RE::TESBoundObject& a_obj) { return &a_obj == a_item; });
+			const auto it = counts.find(a_item);
+			return it != counts.end() ? it->second : 0;
+		}
+
+		bool OnAnEasel(int a_slot)  // g_mtx held
+		{
+			for (const auto& [id, e] : g_easels) {
+				if (e.slot == a_slot) {
+					return true;
+				}
+			}
+			return false;
+		}
+
+		// Finds the paintings that no longer exist anywhere: not with the player, not hung, not on an easel, and not
+		// in the container or on the ground where they were left. Main thread.
+		void SweepGone()
+		{
+			auto*                                   player = RE::PlayerCharacter::GetSingleton();
+			std::vector<int>                        gone;
+			std::array<bool, Forms::kPaintingSlots> hung{};
+			for (int i = 0; i < Forms::kPaintingSlots; ++i) {
+				hung[i] = Place::SlotHung(i);  // (Place has its own lock: asked before taking ours)
+			}
+			{
+				std::lock_guard lk(g_mtx);
+				for (int i = 0; i < Forms::kPaintingSlots; ++i) {
+					const auto& s = g_slots[i];
+					if (!s.used || s.where == 0 || !g_books[i] || OnAnEasel(i) || hung[i] || (player && player->GetItemCount(g_books[i]) > 0)) {
+						continue;
+					}
+					if (s.where == kNowhere) {
+						gone.push_back(i);
+						continue;
+					}
+					// where it was left: only a reference that is loaded can say the painting isn't there any more
+					auto* ref = RE::TESForm::LookupByID<RE::TESObjectREFR>(s.where);
+					if (!ref) {
+						continue;  // not loaded: it's still out there
+					}
+					if (ref->IsDeleted()) {
+						gone.push_back(i);
+					} else if (ref->GetBaseObject() == g_books[i]) {
+						continue;  // the painting itself, lying where it was dropped
+					} else if (ref->Is3DLoaded() && CountIn(ref, g_books[i]) <= 0) {
+						gone.push_back(i);  // a container it was put in, without it
+					}
+				}
+			}
+			for (int i : gone) {
+				Forget(i, false);
+			}
+		}
+
+		// The files of the paintings that are gone. On saving the game.
+		void DeleteGoneFiles()
+		{
+			std::vector<Gone> gone;
+			{
+				std::lock_guard lk(g_mtx);
+				gone.swap(g_gone);
+			}
+			for (auto& g : gone) {
+				DeleteTextureLater(g.dds);
+				std::thread([dir = SlotDir(g.id)] { Store::RemoveDoc(dir); }).detach();
+			}
 		}
 
 		fs::path WorkDir(const std::string& a_id) { return Store::WorkFolder() / Art::FromUtf8(a_id); }
@@ -279,32 +386,46 @@ namespace Items
 			public RE::BSTEventSink<RE::TESContainerChangedEvent>
 		{
 		public:
-			// Selling a painting: it leaves the player while the barter menu is open. Buying it back undoes that.
+			// Follows each painting item: with the player, in a container, dropped, sold (gone), destroyed (gone).
 			RE::BSEventNotifyControl ProcessEvent(const RE::TESContainerChangedEvent* a_event, RE::BSTEventSource<RE::TESContainerChangedEvent>*) override
 			{
-				constexpr RE::FormID kPlayer = 0x14;
-				if (!a_event || (a_event->oldContainer != kPlayer && a_event->newContainer != kPlayer)) {
+				if (!a_event) {
 					return RE::BSEventNotifyControl::kContinue;
 				}
 				const int slot = SlotOfBook(RE::TESForm::LookupByID(a_event->baseObj));
 				if (slot < 0) {
 					return RE::BSEventNotifyControl::kContinue;
 				}
-				auto*       ui = RE::UI::GetSingleton();
-				const bool  barter = ui && ui->IsMenuOpen(RE::BarterMenu::MENU_NAME);
-				auto*       cal = RE::Calendar::GetSingleton();
-				const float today = cal ? cal->GetDaysPassed() : 0.0f;
-				std::lock_guard lk(g_mtx);
-				auto&           s = g_slots[slot];
-				if (!s.used) {
-					return RE::BSEventNotifyControl::kContinue;
+				auto*            ui = RE::UI::GetSingleton();
+				const bool       barter = ui && ui->IsMenuOpen(RE::BarterMenu::MENU_NAME);
+				const auto       oldC = a_event->oldContainer, newC = a_event->newContainer;
+				auto             droppedRef = newC == 0 ? a_event->reference.get() : RE::NiPointer<RE::TESObjectREFR>{};
+				bool             sold = false;
+				{
+					std::lock_guard lk(g_mtx);
+					auto&           s = g_slots[slot];
+					if (!s.used) {
+						return RE::BSEventNotifyControl::kContinue;
+					}
+					if (newC == kPlayerID) {
+						s.where = 0;  // back with the player
+					} else if (oldC == kPlayerID && barter && newC != 0) {
+						sold = true;
+					} else if (oldC == kPlayerID || (s.where != 0 && oldC == s.where) || (oldC == 0 && s.where != 0)) {
+						// left the player (or moved on from where it was): into a container, onto the ground, or nowhere
+						s.where = newC != 0 ? newC : droppedRef ? droppedRef->GetFormID() : kNowhere;
+					}
 				}
-				if (a_event->oldContainer == kPlayer && barter) {
-					s.sold = true;
-					s.soldDay = today;
-					spdlog::info("Sold \"{}\" (slot {}) for about {} gold", s.name, slot + 1, s.value);
-				} else if (a_event->newContainer == kPlayer && s.sold) {
-					s.sold = false;  // bought back
+				if (sold) {
+					// sold: the merchant keeps it and it's gone for good - it can't be bought back
+					SKSE::GetTaskInterface()->AddTask([slot, newC, book = g_books[slot]] {
+						if (auto* merchant = RE::TESForm::LookupByID<RE::TESObjectREFR>(newC); merchant && book) {
+							if (const auto n = CountIn(merchant, book); n > 0) {
+								merchant->RemoveItem(book, n, RE::ITEM_REMOVE_REASON::kRemove, nullptr, nullptr);
+							}
+						}
+						Forget(slot, true);
+					});
 				}
 				return RE::BSEventNotifyControl::kContinue;
 			}
@@ -385,9 +506,11 @@ namespace Items
 		// ---- co-save
 		void OnSave(SKSE::SerializationInterface* a_intfc)
 		{
+			SweepGone();        // paintings that no longer exist anywhere...
+			DeleteGoneFiles();  // ...and those sold or destroyed since the last save: their pictures are deleted now
 			{
 				std::lock_guard lk(g_mtx);
-				if (a_intfc->OpenRecord(kRecordSlots, 2)) {
+				if (a_intfc->OpenRecord(kRecordSlots, 3)) {
 					a_intfc->WriteRecordData(static_cast<std::uint32_t>(g_slots.size()));
 					for (const auto& s : g_slots) {
 						a_intfc->WriteRecordData(static_cast<std::uint8_t>(s.used));
@@ -396,8 +519,7 @@ namespace Items
 						a_intfc->WriteRecordData(static_cast<std::uint8_t>(s.portrait));
 						a_intfc->WriteRecordData(s.version);
 						a_intfc->WriteRecordData(s.value);
-						a_intfc->WriteRecordData(static_cast<std::uint8_t>(s.sold));
-						a_intfc->WriteRecordData(s.soldDay);
+						a_intfc->WriteRecordData(s.where);
 					}
 				}
 				if (a_intfc->OpenRecord(kRecordEasels, 1)) {
@@ -421,7 +543,7 @@ namespace Items
 		{
 			std::uint32_t type = 0, version = 0, length = 0;
 			while (a_intfc->GetNextRecordInfo(type, version, length)) {
-				if (type == kRecordSlots && (version == 1 || version == 2)) {
+				if (type == kRecordSlots && version >= 1 && version <= 3) {
 					std::uint32_t n = 0;
 					a_intfc->ReadRecordData(n);
 					std::lock_guard lk(g_mtx);
@@ -432,13 +554,23 @@ namespace Items
 							a_intfc->ReadRecordData(portrait) != 1 || a_intfc->ReadRecordData(s.version) != sizeof(s.version)) {
 							break;
 						}
-						if (version >= 2) {
+						if (version == 2) {  // 0.7.0: sold paintings were kept for a while
 							std::uint8_t sold = 0;
+							float        soldDay = 0.0f;
 							if (a_intfc->ReadRecordData(s.value) != sizeof(s.value) || a_intfc->ReadRecordData(sold) != 1 ||
-								a_intfc->ReadRecordData(s.soldDay) != sizeof(s.soldDay)) {
+								a_intfc->ReadRecordData(soldDay) != sizeof(soldDay)) {
 								break;
 							}
-							s.sold = sold != 0;
+							s.where = sold ? kNowhere : 0;
+						} else if (version == 3) {
+							RE::FormID where = 0;
+							if (a_intfc->ReadRecordData(s.value) != sizeof(s.value) || a_intfc->ReadRecordData(where) != sizeof(where)) {
+								break;
+							}
+							s.where = where;
+							if (where != 0 && where != kNowhere && !a_intfc->ResolveFormID(where, s.where)) {
+								s.where = kNowhere;  // the container or dropped item is gone from the game
+							}
 						}
 						s.used = used != 0;
 						s.portrait = portrait != 0;
@@ -485,6 +617,7 @@ namespace Items
 				std::lock_guard lk(g_mtx);
 				g_slots = {};
 				g_easels.clear();
+				g_gone.clear();
 				g_menuRequest.reset();
 				g_studioRequest.reset();
 			}
@@ -918,6 +1051,7 @@ namespace Items
 		auto flat = std::make_shared<std::vector<std::uint8_t>>(std::move(a_flat));
 		auto relief = std::make_shared<std::vector<std::uint8_t>>(std::move(a_normal));
 		SKSE::GetTaskInterface()->AddTask([a_easel, name = std::move(a_name), flat, relief, a_w, a_h] {
+			SweepGone();  // frees the slots of paintings that are gone
 			auto stand = a_easel.get();
 			if (!stand) {
 				return;
@@ -942,23 +1076,6 @@ namespace Items
 						}
 					}
 				}
-				if (slot < 0) {  // a painting sold days ago is gone from the merchant's stock: its slot can be reused
-					auto*       cal = RE::Calendar::GetSingleton();
-					const float today = cal ? cal->GetDaysPassed() : 0.0f;
-					auto*       player = RE::PlayerCharacter::GetSingleton();
-					for (int i = 0; i < Forms::kPaintingSlots; ++i) {
-						const auto& o = g_slots[i];
-						if (o.used && o.sold && today - o.soldDay >= kSoldSlotFreeAfterDays && !Place::SlotHung(i) &&
-							!(player && g_books[i] && player->GetItemCount(g_books[i]) > 0)) {
-							spdlog::info("Slot {} (\"{}\", sold) is reused", i + 1, o.name);
-							DeleteTextureLater(SlotDds(o));
-							std::thread([dir = SlotDir(o.id)] { Store::RemoveDoc(dir); }).detach();
-							g_slots[i] = Slot{};
-							slot = i;
-							break;
-						}
-					}
-				}
 				if (slot < 0) {
 					Art::Notify("You have 50 paintings already - sell one or scrape one off at an easel to finish another");
 					return;
@@ -971,7 +1088,7 @@ namespace Items
 				}
 				s.name = name.empty() ? std::string("Untitled") : name;
 				s.portrait = a_h > a_w;
-				s.sold = false;
+				s.where = 0;
 				++s.version;
 				g_slots[slot] = s;     // reserved now
 				it->second = Easel{};  // the easel stands empty again

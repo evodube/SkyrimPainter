@@ -819,7 +819,6 @@ namespace Studio
 
 		void DrawHand(float a_w)
 		{
-			Theme::SectionLabel("Your hand");
 			const float lw = U(92.0f);
 			auto        row = [&](const char* a_label, const char* a_id, float* a_v, float a_min, float a_max, const char* a_fmt, const char* a_tip) {
                 ImGui::AlignTextToFramePadding();
@@ -845,7 +844,152 @@ namespace Studio
 			auto*       dl = ImGui::GetWindowDrawList();
 			const bool  click = ImGui::IsMouseClicked(ImGuiMouseButton_Left) && ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows);
 
+			// ---- what to do next, in one line, at the top
+			{
+				const char* next = g_rag                             ? "Drag the rag over the canvas to lift paint off."
+				                   : g_brush.type < 0                 ? "Start here: pick up a brush or a tool (keys 1-7)."
+				                   : g_brush.type == Paint::kCharcoal ? "Sketch on the canvas - charcoal needs no paint."
+				                   : g_brush.type == Paint::kKnife && !g_brush.Loaded() ? "Load the knife with paint - or drag it clean over the canvas to scrape paint off."
+				                   : !g_brush.Loaded()                ? "Now click a paint on the palette to load your brush."
+				                                                      : "Paint on the canvas. Mix on the palette; wipe the brush on the rag.";
+				const ImVec2 n0 = ImGui::GetCursorScreenPos();
+				const float  th = ImGui::CalcTextSize(next, nullptr, false, a_w - U(16)).y;
+				dl->AddRectFilled(n0, n0 + ImVec2(a_w, th + U(12)), IM_COL32(60, 44, 30, 210), U(6));
+				dl->AddRectFilled(n0, n0 + ImVec2(U(4), th + U(12)), Theme::Gold(), U(2));
+				ImGui::SetCursorScreenPos(n0 + ImVec2(U(10), U(6)));
+				ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(244, 232, 205, 255));
+				ImGui::PushTextWrapPos(n0.x + a_w - U(6));
+				ImGui::TextUnformatted(next);
+				ImGui::PopTextWrapPos();
+				ImGui::PopStyleColor();
+				ImGui::SetCursorScreenPos(n0 + ImVec2(0, th + U(12)));
+				ImGui::Dummy(ImVec2(a_w, U(6)));
+			}
+
+			// ---- brushes (top row), then charcoal, the palette knife and the rag (the tools row)
+			Theme::SectionLabel("1   Pick up a tool");
+			constexpr int kRowBrushes = 5;  // the four brushes and the fan
+			const float   cell = a_w / kRowBrushes;
+			const float   rowH = U(84.0f);
+			const ImVec2  b0 = ImGui::GetCursorScreenPos();
+			ImGui::InvisibleButton("##brushrow", ImVec2(a_w, rowH + ImGui::GetTextLineHeight() + U(8)));
+			// a tile: the tool's picture, its name under it and its key in the corner; the one in hand is lit up
+			auto cellFrame = [&](const ImVec2& c0, float w, const char* label, bool inHand, const char* key) {
+				const ImVec2 a = c0 + ImVec2(U(2), 0), b = c0 + ImVec2(w - U(2), rowH + ImGui::GetTextLineHeight() + U(4));
+				const bool   hov = ImGui::IsMouseHoveringRect(a, b);
+				if (inHand) {
+					dl->AddRectFilled(a, b, IM_COL32(212, 170, 90, 70), U(7));
+					dl->AddRect(a, b, Theme::Gold(), U(7), 0, U(2.0f));
+				} else {
+					dl->AddRectFilled(a, b, hov ? IM_COL32(255, 255, 255, 34) : IM_COL32(0, 0, 0, 22), U(7));
+					if (hov) {
+						dl->AddRect(a, b, Theme::GoldDim(), U(7), 0, 1.0f);
+					}
+				}
+				const float tw = ImGui::CalcTextSize(label).x;
+				dl->AddText(c0 + ImVec2((w - tw) * 0.5f, rowH), inHand ? Theme::Ink() : Theme::InkSoft(), label);
+				// the key, in a little badge
+				const ImVec2 ks = ImGui::CalcTextSize(key);
+				const ImVec2 k0 = a + ImVec2(U(4), U(4)), k1 = k0 + ImVec2(std::max(ks.x + U(8), U(18)), ks.y + U(2));
+				dl->AddRectFilled(k0, k1, inHand ? Theme::Gold() : IM_COL32(60, 44, 30, 200), U(4));
+				dl->AddText(ImVec2((k0.x + k1.x - ks.x) * 0.5f, k0.y + U(1)), inHand ? IM_COL32(40, 28, 16, 255) : IM_COL32(240, 228, 200, 255), key);
+				return hov;
+			};
+			static constexpr const char* kKey[Paint::kBrushCount] = { "1", "2", "3", "4", "5", "6", "7" };
+			static constexpr const char* kShort[Paint::kBrushCount] = { "Detail", "Round", "Filbert", "Flat", "Fan", "Charcoal", "Knife" };
+			for (int i = 0; i < kRowBrushes; ++i) {
+				const ImVec2 c0 = b0 + ImVec2(cell * i, 0);
+				const bool   hov = cellFrame(c0, cell, kShort[i], g_brush.type == i, kKey[i]);
+				{
+					const float len = cell * (0.8f + 0.06f * i);
+					DrawBrushPic(dl, c0 + ImVec2(cell * 0.5f + len * 0.4f, rowH * 0.5f - len * 0.24f), len, nullptr);
+				}
+				if (hov) {
+					static constexpr const char* kWhat[5] = { "fine lines and small details", "an all-round brush", "soft, rounded strokes and blending",
+						"broad, square strokes and blocks of colour", "grass, leaves, fur and wispy clouds" };
+					ImGui::SetTooltip("%s  [key %d]\n%s\n%s", Paint::kBrushes[i].name, i + 1, kWhat[i], g_brush.type == i ? "Click: put it down" : "Click: pick it up");
+					if (click) {
+						PickBrush(i);
+					}
+				}
+			}
+
+			const float  tcell = a_w / 3.0f;
+			const ImVec2 t0 = ImGui::GetCursorScreenPos();
+			ImGui::InvisibleButton("##toolrow", ImVec2(a_w, rowH + ImGui::GetTextLineHeight() + U(8)));
+			// charcoal: a dark stick
+			{
+				const ImVec2 c0 = t0;
+				const bool   hov = cellFrame(c0, tcell, "Charcoal", g_brush.type == Paint::kCharcoal, "6");
+				{
+					const ImVec2 m = c0 + ImVec2(tcell * 0.5f, rowH * 0.5f);
+					const ImVec2 d(tcell * 0.32f, -rowH * 0.22f), nrm(-d.y * 0.12f, d.x * 0.12f);
+					dl->AddQuadFilled(m - d - nrm, m - d + nrm, m + d + nrm, m + d - nrm, IM_COL32(34, 32, 30, 255));
+					dl->AddLine(m - d + nrm * 0.6f, m + d + nrm * 0.6f, IM_COL32(80, 76, 72, 255), 1.0f);
+				}
+				if (hov) {
+					ImGui::SetTooltip("Charcoal  [key 6]\nSketch your drawing first. Needs no paint; dry and grainy, it doesn't mix.\nDrag a clean brush through it to smudge it.");
+					if (click) {
+						PickBrush(Paint::kCharcoal);
+					}
+				}
+			}
+			// the palette knife: a handle and a thin cranked blade
+			{
+				const ImVec2 c0 = t0 + ImVec2(tcell, 0);
+				const bool   hov = cellFrame(c0, tcell, "Palette knife", g_brush.type == Paint::kKnife, "7");
+				{
+					const ImVec2 m = c0 + ImVec2(tcell * 0.5f, rowH * 0.5f);
+					const float  sx = tcell * 0.36f, sy = rowH * 0.24f;
+					dl->AddLine(m + ImVec2(-sx, sy), m + ImVec2(-sx * 0.15f, sy * 0.15f), IM_COL32(110, 70, 40, 255), U(5.0f));  // handle
+					dl->AddLine(m + ImVec2(-sx * 0.15f, sy * 0.15f), m + ImVec2(sx * 0.05f, 0), IM_COL32(150, 150, 150, 255), U(1.5f));
+					dl->AddTriangleFilled(m + ImVec2(sx * 0.05f, -U(2)), m + ImVec2(sx, -sy), m + ImVec2(sx * 0.05f, U(3)), IM_COL32(190, 192, 196, 255));
+				}
+				if (hov) {
+					ImGui::SetTooltip("Palette knife  [key 7]\nLoaded with paint: flat, sharp-edged slabs of thick paint.\nClean (wiped on the rag): scrapes paint off, back to the canvas.");
+					if (click) {
+						PickBrush(Paint::kKnife);
+					}
+				}
+			}
+			// the rag
+			{
+				const ImVec2 c0 = t0 + ImVec2(tcell * 2.0f, 0);
+				const bool   hov = cellFrame(c0, tcell, "Rag", g_rag, "E");
+				const ImVec2 r0 = c0 + ImVec2(tcell * 0.2f, rowH * 0.2f), r1 = c0 + ImVec2(tcell * 0.8f, rowH * 0.8f);
+				{
+					dl->AddRectFilled(r0, r1, IM_COL32(205, 196, 176, 255), U(8));
+					for (int k = 1; k < 4; ++k) {
+						dl->AddLine(r0 + ImVec2(0, (r1.y - r0.y) * k / 4), r0 + ImVec2(r1.x - r0.x, (r1.y - r0.y) * k / 4 + U(4)), IM_COL32(160, 150, 130, 255), 1.0f);
+					}
+				}
+				if (hov) {
+					const bool charcoal = g_brush.type == Paint::kCharcoal;
+					ImGui::SetTooltip("Rag  [key E]\n%s", charcoal                ? "Charcoal can't be wiped - put it down to take the rag"
+					                        : g_brush.type >= 0      ? "Click: wipe the paint off your brush (a clean brush blends the wet paint; a clean knife scrapes)"
+					                        : g_rag                  ? "Click: put the rag down"
+					                                                 : "Click: take the rag - drag it over the canvas to lift paint off");
+					if (click) {
+						if (g_brush.type >= 0 && !charcoal) {
+							g_brush.load = 0.0f;
+							g_brush.color = {};
+						} else if (g_brush.type < 0 || g_rag) {
+							ToggleRag();
+						}
+					}
+				}
+			}
+
 			// ---- the palette
+			ImGui::Dummy(ImVec2(0, U(6)));
+			Theme::SectionLabel("2   Load and mix paint");
+			{
+				const char* how = g_brush.type == Paint::kCharcoal ? "Charcoal needs no paint."
+				                  : g_rag || g_brush.type < 0       ? "Pick up a brush or the knife first."
+				                  : g_brush.Loaded()                ? "Click an empty spot to put down a puddle, then click it with another paint to mix."
+				                                                    : "Click a paint to load your brush.";
+				Theme::TextColoredWrapped(Theme::InkSoft(), how);
+			}
 			const float  ph = a_w / PaletteSpots::kAspect;
 			const ImVec2 p0 = ImGui::GetCursorScreenPos();
 			ImGui::InvisibleButton("##palettepic", ImVec2(a_w, ph));  // (holds the mouse, so dragging here never drags the panel)
@@ -883,7 +1027,7 @@ namespace Studio
 				} else if (g_rag) {
 					Hint("Put the rag down and pick up a brush to load paint");
 				} else if (g_brush.type < 0) {
-					Hint("Pick up a brush first: click one below the palette");
+					Hint("Pick up a brush first: click one above the palette (1-5)");
 				} else {
 					auto& spot = g_spots[a_i];
 					if (spot.mixed && g_brush.Loaded() && !a_shift && ColourDistance(g_brush.color, spot.c) > 12) {
@@ -1012,7 +1156,7 @@ namespace Studio
 							ImGui::SetTooltip("A colour you painted with - click to load the brush with it");
 							if (click) {
 								if (g_brush.type < 0) {
-									Hint("Pick up a brush first: click one below the palette");
+									Hint("Pick up a brush first: click one above the palette (1-5)");
 								} else {
 									LoadColour(g_recent[i]);
 								}
@@ -1022,117 +1166,13 @@ namespace Studio
 				}
 			}
 
-			// ---- brushes (top row), then charcoal, the palette knife and the rag (the tools row)
+			// ---- what's in hand, and how you hold it
 			ImGui::Dummy(ImVec2(0, U(6)));
-			Theme::SectionLabel("Brushes");
-			constexpr int kRowBrushes = 5;  // the four brushes and the fan
-			const float   cell = a_w / kRowBrushes;
-			const float   rowH = U(84.0f);
-			const ImVec2  b0 = ImGui::GetCursorScreenPos();
-			ImGui::InvisibleButton("##brushrow", ImVec2(a_w, rowH + ImGui::GetTextLineHeightWithSpacing()));
-			auto cellFrame = [&](const ImVec2& c0, float w, const char* label, bool inHand) {
-				const bool hov = ImGui::IsMouseHoveringRect(c0, c0 + ImVec2(w, rowH));
-				if (hov) {
-					dl->AddRectFilled(c0, c0 + ImVec2(w, rowH), IM_COL32(255, 255, 255, 18), 6.0f);
-				}
-				const float tw = ImGui::CalcTextSize(label).x;
-				dl->AddText(c0 + ImVec2((w - tw) * 0.5f, rowH), Theme::InkSoft(), label);
-				if (inHand) {
-					dl->AddRect(c0 + ImVec2(4, 4), c0 + ImVec2(w - 4, rowH - 4), Theme::GoldDim(), 6.0f, 0, 1.0f);
-					const char* t = "in hand";
-					dl->AddText(c0 + ImVec2((w - ImGui::CalcTextSize(t).x) * 0.5f, rowH * 0.45f), Theme::Muted(), t);
-				}
-				return hov;
-			};
-			static constexpr const char* kShort[Paint::kBrushCount] = { "Detail", "Round", "Filbert", "Flat", "Fan", "Charcoal", "Knife" };
-			for (int i = 0; i < kRowBrushes; ++i) {
-				const ImVec2 c0 = b0 + ImVec2(cell * i, 0);
-				const bool   hov = cellFrame(c0, cell, kShort[i], g_brush.type == i);
-				if (g_brush.type != i) {
-					const float len = cell * (0.8f + 0.06f * i);
-					DrawBrushPic(dl, c0 + ImVec2(cell * 0.5f + len * 0.4f, rowH * 0.5f - len * 0.24f), len, nullptr);
-				}
-				if (hov) {
-					ImGui::SetTooltip("%s (%d) - %s", Paint::kBrushes[i].name, i + 1, g_brush.type == i ? "click to put it down" : "click to pick it up");
-					if (click) {
-						PickBrush(i);
-					}
-				}
-			}
-
-			Theme::SectionLabel("Tools");
-			const float  tcell = a_w / 3.0f;
-			const ImVec2 t0 = ImGui::GetCursorScreenPos();
-			ImGui::InvisibleButton("##toolrow", ImVec2(a_w, rowH + ImGui::GetTextLineHeightWithSpacing()));
-			// charcoal: a dark stick
-			{
-				const ImVec2 c0 = t0;
-				const bool   hov = cellFrame(c0, tcell, "Charcoal", g_brush.type == Paint::kCharcoal);
-				if (g_brush.type != Paint::kCharcoal) {
-					const ImVec2 m = c0 + ImVec2(tcell * 0.5f, rowH * 0.5f);
-					const ImVec2 d(tcell * 0.32f, -rowH * 0.22f), nrm(-d.y * 0.12f, d.x * 0.12f);
-					dl->AddQuadFilled(m - d - nrm, m - d + nrm, m + d + nrm, m + d - nrm, IM_COL32(34, 32, 30, 255));
-					dl->AddLine(m - d + nrm * 0.6f, m + d + nrm * 0.6f, IM_COL32(80, 76, 72, 255), 1.0f);
-				}
-				if (hov) {
-					ImGui::SetTooltip("Charcoal (6) - sketch the drawing first: dry and grainy, it doesn't mix with paint. A clean brush smudges it.");
-					if (click) {
-						PickBrush(Paint::kCharcoal);
-					}
-				}
-			}
-			// the palette knife: a handle and a thin cranked blade
-			{
-				const ImVec2 c0 = t0 + ImVec2(tcell, 0);
-				const bool   hov = cellFrame(c0, tcell, "Knife", g_brush.type == Paint::kKnife);
-				if (g_brush.type != Paint::kKnife) {
-					const ImVec2 m = c0 + ImVec2(tcell * 0.5f, rowH * 0.5f);
-					const float  sx = tcell * 0.36f, sy = rowH * 0.24f;
-					dl->AddLine(m + ImVec2(-sx, sy), m + ImVec2(-sx * 0.15f, sy * 0.15f), IM_COL32(110, 70, 40, 255), U(5.0f));  // handle
-					dl->AddLine(m + ImVec2(-sx * 0.15f, sy * 0.15f), m + ImVec2(sx * 0.05f, 0), IM_COL32(150, 150, 150, 255), U(1.5f));
-					dl->AddTriangleFilled(m + ImVec2(sx * 0.05f, -U(2)), m + ImVec2(sx, -sy), m + ImVec2(sx * 0.05f, U(3)), IM_COL32(190, 192, 196, 255));
-				}
-				if (hov) {
-					ImGui::SetTooltip("Palette knife (7) - loaded, it lays down flat slabs of thick paint; wiped clean, it scrapes paint off back to the canvas.");
-					if (click) {
-						PickBrush(Paint::kKnife);
-					}
-				}
-			}
-			// the rag
-			{
-				const ImVec2 c0 = t0 + ImVec2(tcell * 2.0f, 0);
-				const bool   hov = cellFrame(c0, tcell, "Rag", g_rag);
-				const ImVec2 r0 = c0 + ImVec2(tcell * 0.2f, rowH * 0.2f), r1 = c0 + ImVec2(tcell * 0.8f, rowH * 0.8f);
-				if (!g_rag) {
-					dl->AddRectFilled(r0, r1, IM_COL32(205, 196, 176, 255), U(8));
-					for (int k = 1; k < 4; ++k) {
-						dl->AddLine(r0 + ImVec2(0, (r1.y - r0.y) * k / 4), r0 + ImVec2(r1.x - r0.x, (r1.y - r0.y) * k / 4 + U(4)), IM_COL32(160, 150, 130, 255), 1.0f);
-					}
-				}
-				if (hov) {
-					const bool charcoal = g_brush.type == Paint::kCharcoal;
-					ImGui::SetTooltip("%s", charcoal                ? "Charcoal can't be wiped - put it down to take the rag"
-					                        : g_brush.type >= 0      ? "Click: wipe the brush clean (a clean brush blends the wet paint; a clean knife scrapes)"
-					                        : g_rag                  ? "Click: put the rag down"
-					                                                 : "Click: take the rag - it lifts paint off the canvas (E)");
-					if (click) {
-						if (g_brush.type >= 0 && !charcoal) {
-							g_brush.load = 0.0f;
-							g_brush.color = {};
-						} else if (g_brush.type < 0 || g_rag) {
-							ToggleRag();
-						}
-					}
-				}
-			}
-
-			// ---- what's in hand
-			ImGui::Dummy(ImVec2(0, U(4)));
+			Theme::SectionLabel("3   Paint");
 			if (g_rag) {
-				Theme::TextColoredWrapped(Theme::InkSoft(), "The rag in hand - wipe paint off the canvas.");
+				Theme::TextColoredWrapped(Theme::InkSoft(), "The rag in hand - drag it over the canvas to lift paint off.");
 			} else if (g_brush.type < 0) {
-				Theme::TextColoredWrapped(Theme::InkSoft(), "No brush in hand.");
+				Theme::TextColoredWrapped(Theme::InkSoft(), "Nothing in hand yet.");
 			} else {
 				const ImVec2 sw = ImGui::GetCursorScreenPos();
 				if (g_brush.Loaded()) {
@@ -1153,10 +1193,10 @@ namespace Studio
 					ImGui::SetTooltip("[ and ] take a smaller or larger brush of the same kind");
 				}
 			}
-			ImGui::Dummy(ImVec2(0, U(6)));
-			DrawHand(a_w);
 			ImGui::Dummy(ImVec2(0, U(4)));
-			Theme::TextColoredWrapped(Theme::InkSoft(), "F1: how everything works");
+			DrawHand(a_w);
+			ImGui::Dummy(ImVec2(0, U(6)));
+			Theme::TextColoredWrapped(Theme::InkSoft(), "Hold right mouse: look around    Z: zoom    C: close-up\nCtrl+Z: undo    F1: the painter's guide");
 		}
 
 		// ---- the painter's guide: everything the studio can do, in the studio
@@ -1227,7 +1267,8 @@ namespace Studio
 							{ "Clean the brush", "Click the rag." },
 							{ "Thick paint", "Full-bodied paint and a heavy touch leave ridges of paint on the canvas that catch the light, bristle marks and all. Thin paint stays flat. The rag and a clean brush flatten it again." },
 							{ "Varnish", "When you finish, choose Matte, Satin or Gloss: how much the finished painting shines in the light." },
-							{ "Selling", "General goods merchants and innkeepers buy finished paintings. The price comes from the painting - how much of the canvas is painted, the detail and the range of colours - and from the work that went into it: the time spent painting and the number of strokes. A quick scribble fetches a few coins; a full, rich painting worked on for 45 minutes or more, a few hundred. The Finish window shows what it would fetch." },
+							{ "Selling", "General goods merchants and innkeepers buy finished paintings. The price comes from the painting - how much of the canvas is painted, the detail and the range of colours - and from the work that went into it: the time spent painting and the number of strokes. A quick scribble fetches a few coins; a full, rich painting worked on for 45 minutes or more, a few hundred. The Finish window shows what it would fetch. A sold painting is gone for good - the merchant won't sell it back." },
+							{ "Keeping paintings", "A painting lasts as long as it exists somewhere: in your pack, hung on a wall, on an easel, in a chest or lying where you dropped it. Sell it, scrape it off or destroy it and it's gone - its picture is deleted the next time you save." },
 							{ "Finish", "Finish painting names it and takes it off the easel as a painting you can hang. Step away (Esc) leaves it on the easel for later. Your work is also saved every few minutes while you paint." },
 						});
 					GuideTab("Brushes", "Each brush leaves its own mark. The outline on the canvas shows where it will touch and how big it is.",

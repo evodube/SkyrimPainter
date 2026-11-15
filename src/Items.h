@@ -38,9 +38,9 @@ namespace Items
 	void EnsureSlotTexture(int a_slot);          // re-makes the DDS from the saved picture if it's missing
 	void TakePaintingItem(int a_slot);           // main thread
 	void GivePaintingItem(int a_slot);           // main thread
-	void RenamePainting(int a_slot, std::string a_name);
+	void RenamePainting(int a_slot, std::string a_name);  // any thread: the slot and its item take the new name
 	// What a merchant pays: the painting itself (RGBA) and the work in it (-1 = not counted)
-	std::int32_t Appraise(const std::vector<std::uint8_t>& a_flat, int a_w, int a_h, int a_varnish, int a_strokes, int a_seconds);  // any thread: the slot and its item take the new name
+	std::int32_t Appraise(const std::vector<std::uint8_t>& a_flat, int a_w, int a_h, int a_varnish, int a_strokes, int a_seconds);
 
 	// ---- the easel
 	RE::TESObjectACTI* EaselStandForm();
