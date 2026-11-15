@@ -539,6 +539,106 @@ namespace Studio
 			}
 		}
 
+		// The brushes on the rack, drawn: a lacquered handle, a metal ferrule and the hairs, each brush its own shape.
+		// Lies diagonally, handle bottom left, tip top right, centred on a_c; a_len = the whole brush.
+		void DrawBrushArt(ImDrawList* a_dl, int a_type, const ImVec2& a_c, float a_len)
+		{
+			const ImVec2 u(0.866f, -0.5f), n(0.5f, 0.866f);  // along the brush (to the tip), across it
+			const ImVec2 base = a_c - u * (a_len * 0.5f);
+			auto P = [&](float t, float w) { return base + u * (t * a_len) + n * (w * a_len); };
+			auto quad = [&](float t0, float w0, float t1, float w1, ImU32 c) {
+				const ImVec2 q[4] = { P(t0, -w0), P(t1, -w1), P(t1, w1), P(t0, w0) };
+				a_dl->AddConvexPolyFilled(q, 4, c);
+			};
+			struct Look
+			{
+				ImU32 handle, handleHi;
+				float ferruleEnd;  // width of the ferrule at the hairs (flattened for flats, filberts and fans)
+			};
+			static const Look kLook[5] = {
+				{ IM_COL32(58, 52, 48, 255), IM_COL32(150, 140, 130, 255), 0.022f },  // detail: black lacquer, a fine round ferrule
+				{ IM_COL32(120, 36, 30, 255), IM_COL32(190, 90, 80, 255), 0.030f },  // round (normally the picture)
+				{ IM_COL32(128, 40, 32, 255), IM_COL32(196, 96, 82, 255), 0.050f },  // filbert: oxblood
+				{ IM_COL32(34, 64, 46, 255), IM_COL32(96, 140, 110, 255), 0.058f },  // flat: bottle green
+				{ IM_COL32(150, 108, 60, 255), IM_COL32(214, 176, 120, 255), 0.040f }, // fan: bare wood
+			};
+			const Look& k = kLook[std::clamp(a_type, 0, 4)];
+			// the handle: thin at the end, swelling before the ferrule
+			quad(0.00f, 0.014f, 0.30f, 0.024f, k.handle);
+			quad(0.30f, 0.024f, 0.56f, 0.026f, k.handle);
+			a_dl->AddCircleFilled(P(0.0f, 0.0f), a_len * 0.014f, k.handle, 12);
+			a_dl->AddLine(P(0.04f, -0.008f), P(0.54f, -0.014f), k.handleHi, std::max(1.0f, a_len * 0.006f));
+			// the ferrule: nickel, crimped flat for the flat-bristled brushes
+			const ImU32 metal = IM_COL32(176, 178, 182, 255), metalHi = IM_COL32(236, 238, 240, 255), metalLo = IM_COL32(110, 112, 118, 255);
+			quad(0.56f, 0.026f, 0.70f, k.ferruleEnd, metal);
+			a_dl->AddLine(P(0.57f, -0.012f), P(0.69f, -k.ferruleEnd * 0.5f), metalHi, std::max(1.0f, a_len * 0.006f));
+			a_dl->AddLine(P(0.60f, -0.026f), P(0.60f, 0.026f), metalLo, 1.0f);  // the crimp
+			// the hairs
+			const ImU32 hog = IM_COL32(226, 212, 178, 255), hogLo = IM_COL32(170, 150, 112, 255);
+			const ImU32 sable = IM_COL32(118, 74, 40, 255), sableTip = IM_COL32(52, 32, 20, 255);
+			switch (a_type) {
+			case 0:  // detail: a long fine point of sable
+				quad(0.70f, 0.020f, 0.82f, 0.018f, sable);
+				{
+					const ImVec2 tri[3] = { P(0.82f, -0.018f), P(1.0f, 0.0f), P(0.82f, 0.018f) };
+					a_dl->AddConvexPolyFilled(tri, 3, sable);
+					const ImVec2 tip[3] = { P(0.93f, -0.007f), P(1.0f, 0.0f), P(0.93f, 0.007f) };
+					a_dl->AddConvexPolyFilled(tip, 3, sableTip);
+				}
+				break;
+			case 1:  // round: a full belly to a point
+				quad(0.70f, 0.030f, 0.80f, 0.036f, sable);
+				{
+					const ImVec2 tri[3] = { P(0.80f, -0.036f), P(0.97f, 0.0f), P(0.80f, 0.036f) };
+					a_dl->AddConvexPolyFilled(tri, 3, sable);
+				}
+				break;
+			case 2:  // filbert: flat hog hairs with an oval end
+				{
+					ImVec2 pts[16];
+					int    np = 0;
+					pts[np++] = P(0.70f, -0.050f);
+					for (int i = 0; i <= 12; ++i) {
+						const float a = -1.5708f + 3.1416f * i / 12.0f;
+						pts[np++] = P(0.86f + std::cos(a) * 0.10f, std::sin(a) * 0.054f);
+					}
+					pts[np++] = P(0.70f, 0.050f);
+					a_dl->AddConvexPolyFilled(pts, np, hog);
+					for (int i = -1; i <= 1; ++i) {
+						a_dl->AddLine(P(0.72f, i * 0.025f), P(0.93f, i * 0.022f), hogLo, 1.0f);
+					}
+				}
+				break;
+			case 3:  // flat: a square block of hog hair
+				quad(0.70f, 0.058f, 0.97f, 0.064f, hog);
+				for (int i = -2; i <= 2; ++i) {
+					a_dl->AddLine(P(0.72f, i * 0.024f), P(0.97f, i * 0.026f), hogLo, 1.0f);
+				}
+				a_dl->AddLine(P(0.97f, -0.064f), P(0.97f, 0.064f), hogLo, std::max(1.0f, a_len * 0.006f));
+				break;
+			default:  // fan: hairs spread in a half circle
+				{
+					const ImVec2 o = P(0.70f, 0.0f);
+					ImVec2       pts[18];
+					int          np = 0;
+					pts[np++] = P(0.70f, -0.040f);
+					for (int i = 0; i <= 14; ++i) {
+						const float  a = -1.05f + 2.1f * i / 14.0f;  // +-60 degrees
+						const ImVec2 d = u * std::cos(a) + n * std::sin(a);
+						pts[np++] = o + d * (a_len * 0.26f);
+					}
+					pts[np++] = P(0.70f, 0.040f);
+					a_dl->AddConvexPolyFilled(pts, np, hog);
+					for (int i = 0; i <= 8; ++i) {
+						const float  a = -1.0f + 2.0f * i / 8.0f;
+						const ImVec2 d = u * std::cos(a) + n * std::sin(a);
+						a_dl->AddLine(o + d * (a_len * 0.04f), o + d * (a_len * 0.25f), hogLo, 1.0f);
+					}
+				}
+				break;
+			}
+		}
+
 		// ---- panels
 		Paint::Brush& Held() { return g_rag ? g_ragHand : g_brush; }
 
@@ -844,28 +944,6 @@ namespace Studio
 			auto*       dl = ImGui::GetWindowDrawList();
 			const bool  click = ImGui::IsMouseClicked(ImGuiMouseButton_Left) && ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows);
 
-			// ---- what to do next, in one line, at the top
-			{
-				const char* next = g_rag                             ? "Drag the rag over the canvas to lift paint off."
-				                   : g_brush.type < 0                 ? "Start here: pick up a brush or a tool (keys 1-7)."
-				                   : g_brush.type == Paint::kCharcoal ? "Sketch on the canvas - charcoal needs no paint."
-				                   : g_brush.type == Paint::kKnife && !g_brush.Loaded() ? "Load the knife with paint - or drag it clean over the canvas to scrape paint off."
-				                   : !g_brush.Loaded()                ? "Now click a paint on the palette to load your brush."
-				                                                      : "Paint on the canvas. Mix on the palette; wipe the brush on the rag.";
-				const ImVec2 n0 = ImGui::GetCursorScreenPos();
-				const float  th = ImGui::CalcTextSize(next, nullptr, false, a_w - U(16)).y;
-				dl->AddRectFilled(n0, n0 + ImVec2(a_w, th + U(12)), IM_COL32(60, 44, 30, 210), U(6));
-				dl->AddRectFilled(n0, n0 + ImVec2(U(4), th + U(12)), Theme::Gold(), U(2));
-				ImGui::SetCursorScreenPos(n0 + ImVec2(U(10), U(6)));
-				ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(244, 232, 205, 255));
-				ImGui::PushTextWrapPos(n0.x + a_w - U(6));
-				ImGui::TextUnformatted(next);
-				ImGui::PopTextWrapPos();
-				ImGui::PopStyleColor();
-				ImGui::SetCursorScreenPos(n0 + ImVec2(0, th + U(12)));
-				ImGui::Dummy(ImVec2(a_w, U(6)));
-			}
-
 			// ---- brushes (top row), then charcoal, the palette knife and the rag (the tools row)
 			Theme::SectionLabel("1   Pick up a tool");
 			constexpr int kRowBrushes = 5;  // the four brushes and the fan
@@ -902,7 +980,11 @@ namespace Studio
 				const bool   hov = cellFrame(c0, cell, kShort[i], g_brush.type == i, kKey[i]);
 				{
 					const float len = cell * (0.8f + 0.06f * i);
-					DrawBrushPic(dl, c0 + ImVec2(cell * 0.5f + len * 0.4f, rowH * 0.5f - len * 0.24f), len, nullptr);
+					if (i == 1) {  // the round brush keeps its picture
+						DrawBrushPic(dl, c0 + ImVec2(cell * 0.5f + len * 0.4f, rowH * 0.5f - len * 0.24f), len, nullptr);
+					} else {
+						DrawBrushArt(dl, i, c0 + ImVec2(cell * 0.5f, rowH * 0.5f + U(6)), std::min(cell * 0.92f, rowH * 1.3f));
+					}
 				}
 				if (hov) {
 					static constexpr const char* kWhat[5] = { "fine lines and small details", "an all-round brush", "soft, rounded strokes and blending",
@@ -946,7 +1028,7 @@ namespace Studio
 					dl->AddTriangleFilled(m + ImVec2(sx * 0.05f, -U(2)), m + ImVec2(sx, -sy), m + ImVec2(sx * 0.05f, U(3)), IM_COL32(190, 192, 196, 255));
 				}
 				if (hov) {
-					ImGui::SetTooltip("Palette knife  [key 7]\nLoaded with paint: flat, sharp-edged slabs of thick paint.\nClean (wiped on the rag): scrapes paint off, back to the canvas.");
+					ImGui::SetTooltip("Palette knife  [key 7]\nLoaded with paint: flat, sharp-edged slabs of solid colour.\nClean (wiped on the rag): scrapes paint off, back to the canvas.");
 					if (click) {
 						PickBrush(Paint::kKnife);
 					}
@@ -1265,11 +1347,10 @@ namespace Studio
 							{ "Your colours", "Every colour you paint with appears in the row under the palette. Click one to load it again." },
 							{ "Paint", "Drag on the canvas standing on the easel with the left mouse button - the paint goes straight onto it. Press C for a flat close-up instead." },
 							{ "Clean the brush", "Click the rag." },
-							{ "Thick paint", "Full-bodied paint and a heavy touch leave ridges of paint on the canvas that catch the light, bristle marks and all. Thin paint stays flat. The rag and a clean brush flatten it again." },
 							{ "Varnish", "When you finish, choose Matte, Satin or Gloss: how much the finished painting shines in the light." },
 							{ "Selling", "General goods merchants and innkeepers buy finished paintings. The price comes from the painting - how much of the canvas is painted, the detail and the range of colours - and from the work that went into it: the time spent painting and the number of strokes. A quick scribble fetches a few coins; a full, rich painting worked on for 45 minutes or more, a few hundred. The Finish window shows what it would fetch. A sold painting is gone for good - the merchant won't sell it back." },
 							{ "Keeping paintings", "A painting lasts as long as it exists somewhere: in your pack, hung on a wall, on an easel, in a chest or lying where you dropped it. Sell it, scrape it off or destroy it and it's gone - its picture is deleted the next time you save." },
-							{ "Finish", "Finish painting names it and takes it off the easel as a painting you can hang. Step away (Esc) leaves it on the easel for later. Your work is also saved every few minutes while you paint." },
+							{ "Finish", "Finish names it and takes it off the easel as a painting you can hang. Step away (Esc) leaves it on the easel for later. Your work is also saved every few minutes while you paint." },
 						});
 					GuideTab("Brushes", "Each brush leaves its own mark. The outline on the canvas shows where it will touch and how big it is.",
 						{
@@ -1279,7 +1360,7 @@ namespace Studio
 							{ "Wide flat", "Skies, washes, large areas. It lies across the way you move it." },
 							{ "Fan brush", "A few bristles spread wide: flick it for grass, leaves, fur and wispy clouds." },
 							{ "Charcoal", "Sketch your drawing first, the way painters do. Dry and grainy, it doesn't mix with paint and is easy to paint over; drag a clean brush through it to smudge it." },
-							{ "Palette knife", "Loaded with paint, it lays down flat, sharp-edged slabs of thick paint - rocks, walls, a heavy sky. Wipe it on the rag and it scrapes paint off, back to the canvas." },
+							{ "Palette knife", "Loaded with paint, it lays down flat, sharp-edged slabs of solid colour - rocks, walls, a heavy sky. Wipe it on the rag and it scrapes paint off, back to the canvas." },
 							{ "1 - 7", "1-5 the brushes, 6 charcoal, 7 the palette knife (press again to put it down)." },
 							{ "[  and  ]", "A smaller or larger brush of the same kind." },
 							{ "X", "Back to the colour you had before - press again to swap back." },
@@ -1311,7 +1392,6 @@ namespace Studio
 							{ "Middle mouse / Space", "Hold and drag to move around a zoomed-in canvas." },
 							{ "M", "In the close-up: see the painting in a mirror. Painters do this to catch mistakes in the drawing." },
 							{ "Step back / Ctrl+0", "The whole canvas again, the right way round." },
-							{ "Reset", "Puts the panel and the close-up back where they started." },
 						});
 					GuideTab("Keys", "",
 						{
@@ -1580,7 +1660,7 @@ namespace Studio
 					ImGui::SetTooltip("Scrape all the paint off the canvas");
 				}
 
-				if (Theme::Button("Finish painting", ImVec2(w2, 0), true)) {
+				if (Theme::Button("Finish", ImVec2(w2, 0), true)) {
 					g_openFinish = true;
 				}
 				ImGui::SameLine();
@@ -1591,13 +1671,6 @@ namespace Studio
 					ImGui::SetTooltip("Leave the painting on the easel and come back to it later (Esc)");
 				}
 
-				if (Theme::Button(g_closeUp ? "Easel" : "Close-up", ImVec2(w3, 0))) {
-					g_closeUp = !g_closeUp;
-				}
-				if (ImGui::IsItemHovered()) {
-					ImGui::SetTooltip("%s", g_closeUp ? "Paint straight onto the canvas standing on the easel (C)" : "A flat close-up of the canvas, to zoom in on details or see it in a mirror (C)");
-				}
-				ImGui::SameLine();
 				if (Theme::Button(g_guide ? "Close guide" : "Guide", ImVec2(w3, 0))) {
 					g_guide = !g_guide;
 				}
@@ -1605,19 +1678,9 @@ namespace Studio
 					ImGui::SetTooltip("How everything works (F1)");
 				}
 				ImGui::SameLine();
-				if (Theme::Button("Reset", ImVec2(w3, 0))) {
-					g_placeFrames = 3;
-					g_canvasPlace = true;
-				}
-				if (ImGui::IsItemHovered()) {
-					ImGui::SetTooltip("Put the panel (and the close-up) back in place");
-				}
-				ImGui::AlignTextToFramePadding();
-				ImGui::TextUnformatted("HUD size");
-				ImGui::SameLine();
 				float size = g_ui * 100.0f;
 				ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
-				if (ImGui::SliderFloat("##hudsize", &size, 60.0f, 120.0f, "%.0f%%")) {
+				if (ImGui::SliderFloat("##hudsize", &size, 60.0f, 120.0f, "HUD size %.0f%%")) {
 					g_ui = std::clamp(size / 100.0f, 0.6f, 1.2f);
 				}
 				if (ImGui::IsItemDeactivatedAfterEdit()) {

@@ -13,9 +13,9 @@ Here you paint the picture yourself. No assets or code from that mod are used.
 
 | Requirement | Notes |
 |---|---|
-| Skyrim SE / AE | 1.5.97 and 1.6.x (Steam and GOG), one DLL. No VR. |
-| [SKSE64](https://skse.silverlock.org/) | The build for your game version |
-| [Address Library for SKSE Plugins](https://www.nexusmods.com/skyrimspecialedition/mods/32444) | SE file for 1.5.97, AE file for 1.6.x |
+| Skyrim SE / AE | 1.5.97, 1.6.x and 1.7.99 / 1.7.104 (Steam and GOG), one DLL. No VR. |
+| [SKSE64](https://skse.silverlock.org/) | The build for your game version (2.3.1 or newer on 1.7.104) |
+| [Address Library for SKSE Plugins](https://www.nexusmods.com/skyrimspecialedition/mods/32444) | SE file for 1.5.97, AE file for 1.6.x, All in One v13 or newer for 1.7.104 |
 
 `SkyrimPainter.esp` is ESL-flagged and only needs `Skyrim.esm`.
 

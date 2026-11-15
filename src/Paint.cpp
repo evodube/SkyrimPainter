@@ -677,11 +677,11 @@ namespace Paint
 			const float flow = bt.flow * (0.25f + 0.75f * p);
 			const float cap = m_style.body * 255.0f;
 			// impasto: thick paint and a heavy hand leave paint standing up off the canvas
-			float build = 70.0f * m_style.body * m_style.body * (0.2f + 0.8f * p);
+			float build = 0.0f;  // no thick paint (was 70 * body^2 * (0.2 + 0.8p))
 			if (kind == Kind::Charcoal) {
 				build = 0.0f;  // dust, not paint
 			} else if (kind == Kind::Knife) {
-				build = 150.0f * m_style.body * (0.5f + 0.5f * p);  // a slab of thick paint
+				build = 0.0f;  // (no thick paint)
 			}
 			const float dr = deposit[0], dg = deposit[1], db = deposit[2];
 			for (int y = y0; y <= y1; ++y) {
@@ -825,7 +825,8 @@ namespace Paint
 			a_out.assign(n * 4, 0);
 			a_rect = nullptr;  // the whole thing
 		}
-		const bool haveH = a_height.size() == n;
+		const bool haveH = false;  // no thick paint: the surface is the canvas weave (the varnish still shines)
+		(void)n;
 		// the surface: the canvas weave (threads every 3 px, as on the blank canvas) where the paint is
 		// thin, plus the paint's own thickness
 		auto surface = [&](int x, int y) {
