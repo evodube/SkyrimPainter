@@ -13,13 +13,27 @@ Here you paint the picture yourself. No assets or code from that mod are used.
 
 | Requirement | Notes |
 |---|---|
-| Skyrim SE / AE | 1.5.97, 1.6.x and 1.7.99 / 1.7.104 (Steam and GOG), one DLL. No VR. |
+| Skyrim SE / AE | 1.5.97, 1.6.x and 1.7.99 / 1.7.104 (Steam and GOG), one DLL. Skyrim VR has its own download (below). |
 | [SKSE64](https://skse.silverlock.org/) | The build for your game version (2.3.1 or newer on 1.7.104) |
 | [Address Library for SKSE Plugins](https://www.nexusmods.com/skyrimspecialedition/mods/32444) | SE file for 1.5.97, AE file for 1.6.x, All in One v13 or newer for 1.7.104 |
 
 `SkyrimPainter.esp` is ESL-flagged and only needs `Skyrim.esm`.
 
 ---
+
+## Skyrim VR (beta)
+
+A separate download, built from the same code, for Skyrim VR 1.4.15 with
+[SKSEVR](https://skse.silverlock.org/) and [VR Address Library for SKSEVR](https://www.nexusmods.com/skyrimspecialedition/mods/58101).
+
+- Hold the brush in your main hand and touch it to the canvas to paint. Press in harder for more paint.
+  The controller buzzes while the bristles are on the canvas.
+- The palette sits in your other hand with the studio panel above it. Point at the panel and pull the trigger
+  to click, or dip the brush into a paint on the panel to load it. The stick scrolls.
+- A: undo, B: redo, X: the rag, Y: hide the panel. Naming a painting opens the headset's keyboard.
+- Placing an easel or a painting: look where it should go, pull the trigger to set it down, B cancels,
+  the stick turns or sizes it.
+- Left-handed, or the brush tip in the wrong place? See `[VR]` in `SkyrimPainter.ini`.
 
 ## How to play
 
@@ -83,6 +97,10 @@ The log is `Documents\My Games\Skyrim Special Edition\SKSE\SkyrimPainter.log`.
 ---
 
 ## Building
+
+The VR version is the same code configured with `-DSKYRIMPAINTER_VR=ON`; CI builds both.
+
+
 GitHub Actions builds on every push to `main` (Windows, Visual Studio 2022, vcpkg). The DLL and the full mod folder
 come out as the `SkyrimPainter` artifact and on the `dist` branch.
 
