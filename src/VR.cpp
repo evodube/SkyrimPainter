@@ -450,6 +450,12 @@ namespace VR
 		return was;
 	}
 
+	void ClearPresses()
+	{
+		std::lock_guard lk(g_btnMtx);
+		g_pressed = 0;
+	}
+
 	float StickX() { return g_stickX; }
 	float StickY() { return g_stickY; }
 
@@ -547,6 +553,7 @@ namespace VR
 	void                    OnStick(int, float, float) {}
 	bool                    IsVRDevice(int) { return false; }
 	bool                    Pressed(Button) { return false; }
+	void                    ClearPresses() {}
 	float                   StickX() { return 0.0f; }
 	float                   StickY() { return 0.0f; }
 	Contact                 BrushOnCanvas(std::uint32_t, bool) { return {}; }

@@ -41,6 +41,7 @@ namespace VR
 		Cancel,     // B, while placing
 	};
 	bool  Pressed(Button a_b);  // pressed since last asked
+	void  ClearPresses();       // forget presses from before (opening the studio)
 	float StickX();             // the brush hand's stick, while placing: turn / size
 	float StickY();             // ...and scrolling the panel
 

@@ -1603,6 +1603,7 @@ namespace Studio
 			g_liveDds = fmt::format("textures\\SkyrimPainter\\InProgress\\{}_{}.dds", Art::ToUtf8(a_work.dir.filename()), Art::NewId());
 			Items::ShowLive(a_work.easel, g_liveDds, g_paint.Composite(), W, H, g_relief);
 			if constexpr (VR::kOn) {
+				VR::ClearPresses();   // (A/B/X/Y pressed before opening don't count)
 				VR::HoldTools(true);  // the brush in your hand, the palette in the other
 			} else {
 				Live::FaceCanvas(a_work.canvas, a_work.portrait);
