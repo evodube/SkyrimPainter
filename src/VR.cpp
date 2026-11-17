@@ -486,7 +486,7 @@ namespace VR
 		constexpr float kContact = 0.5f;   // within ~7 mm of the surface counts as touching
 		constexpr float kSquash = 2.5f;    // pressed ~3.5 cm in: full pressure
 		constexpr float kThrough = 12.0f;  // further than this, the hand has gone through the canvas
-		out.near = on && d < 6.0f && d > -kThrough;
+		out.hovering = on && d < 6.0f && d > -kThrough;
 		out.touching = on && d < kContact && d > -kThrough;
 		out.pressure = std::clamp((kContact - d) / kSquash, 0.08f, 1.0f);
 		return out;

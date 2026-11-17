@@ -47,7 +47,7 @@ namespace VR
 	// ---- the brush in your hand
 	struct Contact
 	{
-		bool  near = false;      // the tip is close to the canvas, in front of it
+		bool  hovering = false;  // the tip is close to the canvas, in front of it
 		bool  touching = false;  // the tip is on (or pressed into) the canvas
 		float u = 0.0f, v = 0.0f;  // where, 0..1 across and down the painted face
 		float pressure = 0.0f;   // how hard: 0..1
