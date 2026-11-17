@@ -875,7 +875,7 @@ namespace Studio
 		}
 
 		// The flat close-up: fitted into a_size, then zoomed / panned / mirrored. Middle button or Space +
-		// left button pans, Ctrl + wheel zooms, the wheel alone sets the touch.
+		// left button pans, Z zooms, the wheel sets the touch.
 		void DrawCanvas(const ImVec2& a_size)
 		{
 			const float  W = static_cast<float>(g_paint.Width()), H = static_cast<float>(g_paint.Height());
@@ -902,16 +902,8 @@ namespace Studio
 			if (panning) {
 				g_pan = g_pan + io.MouseDelta;
 			}
-			if (hovered && io.MouseWheel != 0.0f) {
-				if (io.KeyCtrl) {  // zoom about the point under the cursor
-					const float  nz = std::clamp(g_zoom * std::pow(1.15f, io.MouseWheel), 0.5f, 8.0f);
-					const ImVec2 mid = r0 + a_size * 0.5f;
-					const ImVec2 rel = (io.MousePos - (mid + g_pan)) * (nz / g_zoom);
-					g_pan = io.MousePos - mid - rel;
-					g_zoom = nz;
-				} else {
-					g_pressure = std::clamp(g_pressure + 0.05f * io.MouseWheel, 0.05f, 1.0f);
-				}
+			if (hovered && io.MouseWheel != 0.0f) {  // the wheel sets the touch; Z zooms
+				g_pressure = std::clamp(g_pressure + 0.05f * io.MouseWheel, 0.05f, 1.0f);
 			}
 			const Surface s = Surface::FromRect(origin.x, origin.y, scale, W, g_mirror);
 			PaintOn(s, hovered && !ImGui::IsKeyDown(ImGuiKey_Space) && !Overlay::Looking(), hovered && !panning);
@@ -1386,9 +1378,8 @@ namespace Studio
 							{ "Right mouse (hold)", "Look around: the mouse turns your view instead of moving the cursor. Turn back to the canvas to paint on it." },
 							{ "Tab", "Hide the panel." },
 							{ "C / Close-up", "A flat close-up of the canvas in a window, for fine detail. Press C again to paint on the easel." },
-							{ "Z", "Look 25% closer at the canvas on the easel; press again to look normally. In the close-up it zooms to 125% and back." },
+							{ "Z", "Zoom in and out: 25% closer and back." },
 							{ "Move the close-up", "Drag its top bar. Drag its bottom corner to make it bigger or smaller." },
-							{ "Ctrl + wheel", "Zoom in and out where the cursor is." },
 							{ "Middle mouse / Space", "Hold and drag to move around a zoomed-in canvas." },
 							{ "M", "In the close-up: see the painting in a mirror. Painters do this to catch mistakes in the drawing." },
 							{ "Step back / Ctrl+0", "The whole canvas again, the right way round." },
@@ -1402,12 +1393,11 @@ namespace Studio
 							{ "Shift + click", "Straight line from the last stroke" },
 							{ "1 - 7", "Brushes, charcoal (6), palette knife (7)" },
 							{ "X", "Swap to the colour before" },
-							{ "Ctrl + wheel", "Zoom (close-up)" },
+							{ "Z", "Zoom in and out" },
 							{ "Middle / Space + drag", "Move the canvas (close-up)" },
 							{ "[  ]", "Brush size" },
 							{ "E", "Take / put down the rag" },
 							{ "C", "Close-up / paint on the easel" },
-							{ "Z", "Look 25% closer / back" },
 							{ "M", "Mirror (close-up)" },
 							{ "Ctrl+Z / Ctrl+Y", "Undo / redo (25 steps)" },
 							{ "Mouse back / forward", "Undo / redo" },
@@ -1789,6 +1779,17 @@ namespace Studio
 			if (ImGui::IsKeyPressed(ImGuiKey_Tab, false)) {
 				g_hideHud = !g_hideHud;
 			}
+			// Z zooms whenever: between strokes or in the middle of one
+			if (ImGui::IsKeyPressed(ImGuiKey_Z, false) && !io.KeyCtrl) {
+				if (g_closeUp) {  // the close-up: 125%, or back to the whole canvas
+					const bool in = std::fabs(g_zoom - 1.25f) > 0.01f;
+					g_zoom = in ? 1.25f : 1.0f;
+					g_pan = ImVec2(0.0f, 0.0f);
+				} else {  // on the easel: look 25% closer, or back
+					g_worldZoom = !g_worldZoom;
+					Live::SetZoom(g_worldZoom);
+				}
+			}
 			if (!g_painting) {
 				if (ImGui::IsKeyPressed(ImGuiKey_LeftBracket) && g_brush.type >= 0) {
 					g_brush.size = std::max(0, g_brush.size - 1);
@@ -1826,16 +1827,6 @@ namespace Studio
 				}
 				if (ImGui::IsKeyPressed(ImGuiKey_M, false) && g_closeUp) {
 					g_mirror = !g_mirror;
-				}
-				if (ImGui::IsKeyPressed(ImGuiKey_Z, false) && !io.KeyCtrl) {
-					if (g_closeUp) {  // the close-up: 125%, or back to the whole canvas
-						const bool in = std::fabs(g_zoom - 1.25f) > 0.01f;
-						g_zoom = in ? 1.25f : 1.0f;
-						g_pan = ImVec2(0.0f, 0.0f);
-					} else {  // on the easel: look 25% closer, or back
-						g_worldZoom = !g_worldZoom;
-						Live::SetZoom(g_worldZoom);
-					}
 				}
 				if (ImGui::IsKeyPressed(ImGuiKey_C, false) && !io.KeyCtrl) {
 					g_closeUp = !g_closeUp;

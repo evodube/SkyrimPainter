@@ -270,21 +270,56 @@ namespace Live
 		});
 	}
 
+	namespace
+	{
+		// Runs a console command the way the console does (the "fov" command sets the field of view on every
+		// game version, without relying on where the camera keeps it).
+		void RunConsole(const std::string& a_cmd)
+		{
+			auto* factory = RE::IFormFactory::GetConcreteFormFactoryByType<RE::Script>();
+			auto* script = factory ? factory->Create() : nullptr;
+			if (!script) {
+				spdlog::warn("Zoom: can't run \"{}\"", a_cmd);
+				return;
+			}
+			script->SetCommand(a_cmd);
+			script->CompileAndRun(nullptr);
+			delete script;
+		}
+
+		// The field of view now: the camera's, if it looks like one, else the INI's, else the game's default.
+		float CurrentFov()
+		{
+			// (where the camera keeps it is only known up to 1.6; on 1.7 the INI's value is used)
+			auto* cam = REL::Module::get().version() < SKSE::RUNTIME_SSE_1_7_99 ? RE::PlayerCamera::GetSingleton() : nullptr;
+			if (cam) {
+				const float f = cam->GetRuntimeData2().worldFOV;
+				if (f >= 20.0f && f <= 150.0f) {
+					return f;
+				}
+			}
+			if (auto* ini = RE::INISettingCollection::GetSingleton()) {
+				if (auto* set = ini->GetSetting("fDefaultWorldFOV:Display"); set && set->GetFloat() >= 20.0f && set->GetFloat() <= 150.0f) {
+					return set->GetFloat();
+				}
+			}
+			return 80.0f;
+		}
+	}
+
 	void SetZoom(bool a_on)
 	{
 		SKSE::GetTaskInterface()->AddTask([a_on] {
-			auto* cam = RE::PlayerCamera::GetSingleton();
-			if (!cam) {
-				return;
-			}
-			auto& fov = cam->GetRuntimeData2().worldFOV;
 			if (a_on && g_fovBefore <= 0.0f) {
 				// 25% closer: everything in view looks 1.25 times bigger
-				g_fovBefore = fov;
-				const float half = std::clamp(fov, 10.0f, 150.0f) * 0.5f * 0.0174532925f;
-				fov = 2.0f * std::atan(std::tan(half) / 1.25f) * 57.2957795f;
+				g_fovBefore = CurrentFov();
+				const float half = g_fovBefore * 0.5f * 0.0174532925f;
+				const float fov = 2.0f * std::atan(std::tan(half) / 1.25f) * 57.2957795f;
+				RunConsole(fmt::format("fov {:.2f}", fov));
+				spdlog::info("Zoom in: field of view {:.1f} -> {:.1f}", g_fovBefore, fov);
 			} else if (!a_on && g_fovBefore > 0.0f) {
-				fov = g_fovBefore;
+				RunConsole(fmt::format("fov {:.2f}", g_fovBefore));
+				spdlog::info("Zoom out: field of view back to {:.1f}", g_fovBefore);
 				g_fovBefore = 0.0f;
 			}
 		});
