@@ -482,7 +482,7 @@ namespace VR
 		const RE::NiPoint3 p = tip - n * d - c[0];
 		out.u = p.Dot(e1) / e1.SqrLength();
 		out.v = p.Dot(e2) / e2.SqrLength();
-		const bool on = out.u >= 0.0f && out.u <= 1.0f && out.v >= 0.0f && out.v <= 1.0f;
+		const bool on = out.u >= -0.02f && out.u <= 1.02f && out.v >= -0.02f && out.v <= 1.02f;  // (the face isn't quite square)
 		constexpr float kContact = 0.5f;   // within ~7 mm of the surface counts as touching
 		constexpr float kSquash = 2.5f;    // pressed ~3.5 cm in: full pressure
 		constexpr float kThrough = 12.0f;  // further than this, the hand has gone through the canvas
