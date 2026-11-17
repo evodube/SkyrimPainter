@@ -19,6 +19,7 @@
 #include "Menus.h"
 #include "Studio.h"
 #include "Theme.h"
+#include "VR.h"
 #include "Place.h"
 
 #define IMGUI_DEFINE_MATH_OPERATORS
@@ -278,6 +279,18 @@ namespace Overlay
 				return menuBusy;
 			};
 			for (auto* e = *a_event; e; e = e->next) {
+				if constexpr (VR::kOn) {  // the controllers: their buttons and sticks go to the VR side
+					const int dev = static_cast<int>(e->GetDevice());
+					if (VR::IsVRDevice(dev)) {
+						if (auto* b = e->AsButtonEvent(); b && (b->IsDown() || b->IsUp())) {
+							VR::OnButton(dev, b->GetIDCode(), b->IsDown());
+						} else if (e->GetEventType() == RE::INPUT_EVENT_TYPE::kThumbstick) {
+							auto* t = static_cast<RE::ThumbstickEvent*>(e);
+							VR::OnStick(dev, t->xValue, t->yValue);
+						}
+						continue;
+					}
+				}
 				if (e->GetEventType() == RE::INPUT_EVENT_TYPE::kMouseMove) {
 					if (g_open && !g_look) {
 						auto* mm = static_cast<RE::MouseMoveEvent*>(e);
@@ -641,6 +654,7 @@ namespace Overlay
 	{
 		std::error_code ec;
 		g_iniPath = fs::absolute(fs::path(L"Data\\SKSE\\Plugins\\SkyrimPainter.ini"), ec).string();
+		VR::LoadSettings();
 		const char* ini = g_iniPath.c_str();
 		char        buf[64]{};
 		::GetPrivateProfileStringA("General", "fFontSize", "18", buf, sizeof buf, ini);
@@ -722,7 +736,7 @@ namespace Overlay
 			return;
 		}
 		// BSInputDeviceManager::PollInputDevices -> the call that sends the input events to all listeners.
-		REL::Relocation<std::uintptr_t> target{ REL::RelocationID(67315, 68617), REL::VariantOffset(0x7B, 0x7B, 0x81) };
+		REL::Relocation<std::uintptr_t> target{ REL::RelocationID(67315, 68617), REL::VariantOffset(0x7B, 0x81, 0x7B) };
 		const auto*                     code = reinterpret_cast<const std::uint8_t*>(target.address());
 		if (*code != 0xE8) {
 			spdlog::warn("Input blocker: unexpected code at {:X} ({:02X}) - other mods' hotkeys can still fire in the studio", target.address(), *code);
@@ -810,7 +824,7 @@ namespace Overlay
 			}
 			g_dev->GetImmediateContext(&g_ctx);
 			g_sc = a_sc;
-			g_displayH = h;
+			g_displayH = VR::kOn ? 1080.0f : h;  // (in VR the panel is its own size: text at 1080p size)
 			spdlog::info("Attached to the game's swap chain (height {})", h);
 		}
 		if (a_sc != g_sc) {
@@ -819,6 +833,25 @@ namespace Overlay
 
 		Studio::Flush();
 		Menus::Flush();
+		if constexpr (VR::kOn) {  // placing with the controllers: trigger sets it down, B cancels, the stick turns / sizes
+			if (Place::IsPlacing() && !g_open) {
+				if (VR::Pressed(VR::Button::Place)) {
+					Place::RequestPlace();
+				}
+				if (VR::Pressed(VR::Button::Cancel)) {
+					Place::Cancel();
+				}
+				static auto lastTurn = std::chrono::steady_clock::now();
+				const auto  t = std::chrono::steady_clock::now();
+				if (std::fabs(VR::StickX()) > 0.5f && t - lastTurn > std::chrono::milliseconds(120)) {
+					lastTurn = t;
+					Place::Wheel(VR::StickX() > 0.0f ? 1 : -1, false);
+				}
+			} else {
+				VR::Pressed(VR::Button::Place);  // (presses outside placing don't count later)
+				VR::Pressed(VR::Button::Cancel);
+			}
+		}
 		ApplyPlacementControls(Place::IsPlacing());
 		Place::Tick();
 		PollRequests();
@@ -826,8 +859,9 @@ namespace Overlay
 			ApplyOpen(g_wantOpen);
 		}
 		Place::Status placing;
-		const bool    hud = !g_open && Place::GetStatus(placing);
+		const bool    hud = !VR::kOn && !g_open && Place::GetStatus(placing);  // (in VR the notices say what to do)
 		if ((!g_open && !hud) || g_imguiFailed) {
+			VR::ShowPanel(VR::PanelMode::Hidden, g_ctx);
 			if (!g_open) {
 				std::lock_guard lk(g_inputMtx);
 				g_input.clear();
@@ -845,7 +879,13 @@ namespace Overlay
 		}
 
 		ID3D11Texture2D* back = nullptr;
-		if (FAILED(a_sc->GetBuffer(0, __uuidof(ID3D11Texture2D), reinterpret_cast<void**>(&back))) || !back) {
+		ID3D11RenderTargetView* vrTarget = VR::kOn ? VR::PanelTarget(g_dev) : nullptr;
+		if (VR::kOn && !vrTarget) {
+			return;
+		}
+		if (VR::kOn) {
+			// (in VR ImGui draws into the panel's texture, which the headset shows)
+		} else if (FAILED(a_sc->GetBuffer(0, __uuidof(ID3D11Texture2D), reinterpret_cast<void**>(&back))) || !back) {
 			back = GameBackBuffer();  // a wrapped swap chain: draw into the game's own back buffer
 			if (!back) {
 				WarnOnce(16, "No back buffer to draw on, from the swap chain or the game");
@@ -853,10 +893,14 @@ namespace Overlay
 			}
 			WarnOnce(32, "The swap chain gives no back buffer - drawing into the game's");
 		}
-		D3D11_TEXTURE2D_DESC bd{};
-		back->GetDesc(&bd);
 		auto& io = ImGui::GetIO();
-		io.DisplaySize = ImVec2(static_cast<float>(bd.Width), static_cast<float>(bd.Height));
+		if (back) {
+			D3D11_TEXTURE2D_DESC bd{};
+			back->GetDesc(&bd);
+			io.DisplaySize = ImVec2(static_cast<float>(bd.Width), static_cast<float>(bd.Height));
+		} else {
+			io.DisplaySize = VR::PanelSize();
+		}
 		const auto now = std::chrono::steady_clock::now();
 		const float dt = g_lastFrame.time_since_epoch().count() ? std::chrono::duration<float>(now - g_lastFrame).count() : 1.0f / 60.0f;
 		g_lastFrame = now;
@@ -873,11 +917,15 @@ namespace Overlay
 		} else {
 			DrainInput();
 		}
+		if constexpr (VR::kOn) {
+			VR::FeedMouse(io);
+			VR::FeedKeyboard(io);
+		}
 		g_studioActive = g_open && g_screen == Screen::Studio;
 		if (!g_studioActive) {
 			g_look = false;
 		}
-		if (g_open) {
+		if (g_open && !VR::kOn) {
 			io.MouseDrawCursor = !g_look;
 		}
 
@@ -907,6 +955,33 @@ namespace Overlay
 			}
 		}
 		ImGui::Render();
+		if (vrTarget) {
+			// draw into the panel, then put back the game's render target and viewport
+			ID3D11RenderTargetView* oldRtv = nullptr;
+			ID3D11DepthStencilView* oldDsv = nullptr;
+			UINT                    nvp = 1;
+			D3D11_VIEWPORT          oldVp{};
+			g_ctx->OMGetRenderTargets(1, &oldRtv, &oldDsv);
+			g_ctx->RSGetViewports(&nvp, &oldVp);
+			const float clear[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
+			g_ctx->ClearRenderTargetView(vrTarget, clear);
+			g_ctx->OMSetRenderTargets(1, &vrTarget, nullptr);
+			const D3D11_VIEWPORT vp{ 0.0f, 0.0f, io.DisplaySize.x, io.DisplaySize.y, 0.0f, 1.0f };
+			g_ctx->RSSetViewports(1, &vp);
+			ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
+			g_ctx->OMSetRenderTargets(1, &oldRtv, oldDsv);
+			if (nvp > 0) {
+				g_ctx->RSSetViewports(nvp, &oldVp);
+			}
+			if (oldRtv) {
+				oldRtv->Release();
+			}
+			if (oldDsv) {
+				oldDsv->Release();
+			}
+			VR::ShowPanel(g_open && g_screen == Screen::Studio ? VR::PanelMode::Palette : VR::PanelMode::Floating, g_ctx);
+			return;
+		}
 		ID3D11RenderTargetView* rtv = nullptr;
 		g_dev->CreateRenderTargetView(back, nullptr, &rtv);
 		back->Release();

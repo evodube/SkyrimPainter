@@ -23,6 +23,7 @@
 #include "Store.h"
 #include "Surface.h"
 #include "Theme.h"
+#include "VR.h"
 
 #define IMGUI_DEFINE_MATH_OPERATORS
 #include <imgui.h>
@@ -474,6 +475,7 @@ namespace Studio
 			Live::Detach(a_saving);
 			if (g_open) {
 				Live::RestoreView();
+				VR::HoldTools(false);
 			}
 			if (g_srv) {
 				g_release.push_back(g_srv);
@@ -930,11 +932,13 @@ namespace Studio
 				"How thick the paint is. Thin: a glaze you can see through, however much you go over it in one stroke. Full: covers what's under it.");
 		}
 
-		void DrawPalettePanel(float a_w)
+		// a_part: 0 everything; in VR the panel has two columns: 1 the tools and the palette, 2 the hand
+		void DrawPalettePanel(float a_w, int a_part = 0)
 		{
 			const auto& io = ImGui::GetIO();
 			auto*       dl = ImGui::GetWindowDrawList();
 			const bool  click = ImGui::IsMouseClicked(ImGuiMouseButton_Left) && ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows);
+			if (a_part != 2) {
 
 			// ---- brushes (top row), then charcoal, the palette knife and the rag (the tools row)
 			Theme::SectionLabel("1   Pick up a tool");
@@ -1240,6 +1244,11 @@ namespace Studio
 				}
 			}
 
+			}  // (the tools and the palette)
+			if (a_part == 1) {
+				return;
+			}
+
 			// ---- what's in hand, and how you hold it
 			ImGui::Dummy(ImVec2(0, U(6)));
 			Theme::SectionLabel("3   Paint");
@@ -1270,7 +1279,80 @@ namespace Studio
 			ImGui::Dummy(ImVec2(0, U(4)));
 			DrawHand(a_w);
 			ImGui::Dummy(ImVec2(0, U(6)));
-			Theme::TextColoredWrapped(Theme::InkSoft(), "Hold right mouse: look around    Z: zoom    C: close-up\nCtrl+Z: undo    F1: the painter's guide");
+			if constexpr (VR::kOn) {
+				Theme::TextColoredWrapped(Theme::InkSoft(),
+					"Touch the canvas with the brush to paint; press harder for more. Dip the brush into a paint here to load it.\n"
+					"A: undo   B: redo   X: the rag   Y: hide this panel");
+			} else {
+				Theme::TextColoredWrapped(Theme::InkSoft(), "Hold right mouse: look around    Z: zoom    C: close-up\nCtrl+Z: undo    F1: the painter's guide");
+			}
+		}
+
+		// ---- VR: the brush in your hand touches the canvas on the easel
+		ImVec2 g_vrLast(-1.0f, -1.0f);
+		bool   g_vrHinted = false;
+
+		void PaintInVR()
+		{
+			const auto   c = VR::BrushOnCanvas(g_work.canvas, g_work.portrait);
+			const float  W = static_cast<float>(g_paint.Width()), H = static_cast<float>(g_paint.Height());
+			const ImVec2 m(std::clamp(c.u, 0.0f, 1.0f) * (W - 1.0f), std::clamp(c.v, 0.0f, 1.0f) * (H - 1.0f));
+			const double now = ImGui::GetTime();
+			const float  pressure = std::clamp(g_pressure * c.pressure * 1.6f, 0.05f, 1.0f);
+			if (c.touching) {
+				if (g_vrLast.x >= 0.0f) {  // which way the brush is travelling (the flat brushes lie across it)
+					const ImVec2 d = m - g_vrLast;
+					const float  len = std::sqrt(d.x * d.x + d.y * d.y);
+					if (len > 0.75f) {
+						g_dir = g_dir * 0.75f + d / len * 0.25f;
+						const float l2 = std::sqrt(g_dir.x * g_dir.x + g_dir.y * g_dir.y);
+						g_dir = l2 > 0.01f ? g_dir / l2 : ImVec2(1.0f, 0.0f);
+					}
+				}
+			}
+			if (c.touching && !g_painting) {
+				if (!g_rag && g_brush.type < 0) {
+					if (!g_vrHinted) {
+						g_vrHinted = true;
+						Hint("Pick up a brush first: point at one on the panel and pull the trigger");
+					}
+				} else {
+					Paint::StrokeStyle style;
+					style.body = g_body;
+					style.lift = g_rag;
+					const auto& bt = Paint::kBrushes[std::max(0, g_brush.type)];
+					g_stroker.string = 0.0f;
+					g_stroker.taper = g_rag ? 8.0f : bt.radius * Paint::kSizes[std::clamp(g_brush.size, 0, Paint::kSizeCount - 1)] * 1.5f;
+					if (!g_rag && g_brush.Loaded()) {
+						RememberColour(g_brush.color);
+					}
+					g_stroker.Begin(m.x, m.y, now);
+					g_paint.BeginStroke(Held(), m.x, m.y, 0.3f * pressure, style);
+					g_painting = true;
+				}
+			}
+			if (g_painting) {
+				g_points.clear();
+				const ImVec2 at = c.touching ? m : g_vrLast;  // lifting off: end where it last touched
+				g_stroker.Move(at.x, at.y, now, pressure, g_points);
+				if (!c.touching) {
+					g_stroker.Finish(g_points);
+				}
+				for (const auto& pt : g_points) {
+					g_paint.StrokeTo(Held(), pt.x, pt.y, pt.pressure);
+				}
+				if (!c.touching) {
+					g_paint.EndStroke(Held());
+					g_painting = false;
+					++g_edits;
+					CountStroke(now);
+					g_lineFrom = at;
+					g_hasLineFrom = true;
+				} else {
+					VR::Buzz(0.12f + 0.5f * c.pressure);  // feel the bristles on the canvas
+				}
+			}
+			g_vrLast = c.touching ? m : ImVec2(-1.0f, -1.0f);
 		}
 
 		// ---- the painter's guide: everything the studio can do, in the studio
@@ -1520,7 +1602,12 @@ namespace Studio
 		if (a_work.canvas) {
 			g_liveDds = fmt::format("textures\\SkyrimPainter\\InProgress\\{}_{}.dds", Art::ToUtf8(a_work.dir.filename()), Art::NewId());
 			Items::ShowLive(a_work.easel, g_liveDds, g_paint.Composite(), W, H, g_relief);
-			Live::FaceCanvas(a_work.canvas, a_work.portrait);
+			if constexpr (VR::kOn) {
+				VR::ClearPresses();   // (A/B/X/Y pressed before opening don't count)
+				VR::HoldTools(true);  // the brush in your hand, the palette in the other
+			} else {
+				Live::FaceCanvas(a_work.canvas, a_work.portrait);
+			}
 		} else {
 			g_closeUp = true;
 		}
@@ -1550,7 +1637,26 @@ namespace Studio
 				Hint("The canvas in the world couldn't be painted on - painting in the close-up");
 			}
 		}
-		if (!g_closeUp) {
+		if constexpr (VR::kOn) {
+			if (!g_closeUp) {
+				PaintInVR();
+			}
+			if (VR::Pressed(VR::Button::Undo) && g_paint.CanUndo() && !g_painting) {
+				g_paint.Undo();
+				++g_edits;
+			}
+			if (VR::Pressed(VR::Button::Redo) && g_paint.CanRedo() && !g_painting) {
+				g_paint.Redo();
+				++g_edits;
+			}
+			if (VR::Pressed(VR::Button::Rag)) {
+				ToggleRag();
+			}
+			if (VR::Pressed(VR::Button::HidePanel)) {
+				g_hideHud = !g_hideHud;
+			}
+		}
+		if (!g_closeUp && !VR::kOn) {
 			DrawWorldCanvas(looking);
 			if (ImGui::GetTime() < g_hintUntil) {  // (the close-up shows hints in its title bar)
 				auto*        fg = ImGui::GetForegroundDrawList();
@@ -1617,14 +1723,28 @@ namespace Studio
 				ImGui::PushStyleVar(ImGuiStyleVar_Alpha, 0.25f);
 			}
 			// one panel on the right edge: the palette, brushes and rag, your hand, then the history, finishing and the view
-			ImGui::SetNextWindowPos(ImVec2(screen.x - margin, screen.y * 0.5f), cond, ImVec2(1.0f, 0.5f));
-			ImGui::SetNextWindowSize(ImVec2(panelW, 0.0f), ImGuiCond_Always);
+			if constexpr (VR::kOn) {  // in VR the panel is the whole picture above the palette
+				ImGui::SetNextWindowPos(ImVec2(0.0f, 0.0f), ImGuiCond_Always);
+				ImGui::SetNextWindowSize(screen, ImGuiCond_Always);
+			} else {
+				ImGui::SetNextWindowPos(ImVec2(screen.x - margin, screen.y * 0.5f), cond, ImVec2(1.0f, 0.5f));
+				ImGui::SetNextWindowSize(ImVec2(panelW, 0.0f), ImGuiCond_Always);
+			}
 			if (Theme::BeginWindow("##studiopanel", nullptr, faded)) {
 				ImGui::SetWindowFontScale(g_ui);
-				const float w = ImGui::GetContentRegionAvail().x;
+				float       w = ImGui::GetContentRegionAvail().x;
 				const float sp = ImGui::GetStyle().ItemSpacing.x;
+				const bool  vrColumns = VR::kOn && ImGui::BeginTable("##vrcolumns", 2, ImGuiTableFlags_SizingStretchSame);
+				if (vrColumns) {  // tools and palette on the left, the hand and the buttons on the right
+					ImGui::TableNextColumn();
+					DrawPalettePanel(ImGui::GetContentRegionAvail().x, 1);
+					ImGui::TableNextColumn();
+					w = ImGui::GetContentRegionAvail().x;
+					DrawPalettePanel(w, 2);
+				} else {
+					DrawPalettePanel(w);
+				}
 				const float w2 = (w - sp) * 0.5f, w3 = (w - sp * 2.0f) / 3.0f;
-				DrawPalettePanel(w);
 
 				ImGui::Dummy(ImVec2(0, U(4)));
 				ImGui::Separator();
@@ -1676,6 +1796,9 @@ namespace Studio
 				if (ImGui::IsItemDeactivatedAfterEdit()) {
 					::WritePrivateProfileStringA("Studio", "fHudSize", fmt::format("{:.2f}", g_ui).c_str(), Overlay::IniPath().c_str());
 					g_placeFrames = 3;  // the panel changes size: put it back against the edge
+				}
+				if (vrColumns) {
+					ImGui::EndTable();
 				}
 			}
 			Theme::EndWindow();

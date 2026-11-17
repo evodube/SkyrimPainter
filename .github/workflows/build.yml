@@ -3,6 +3,7 @@ name: Build SkyrimPainter
 on:
   push:
     branches: [main]
+    tags-ignore: ['*']
   pull_request:
   workflow_dispatch:
 
@@ -12,6 +13,18 @@ permissions:
 jobs:
   build:
     runs-on: windows-2022   # has Visual Studio 2022 (windows-latest moved on)
+    strategy:
+      fail-fast: false
+      matrix:
+        include:   # two downloads from the same code
+          - flavour: se      # Skyrim SE / AE
+            vr: 'OFF'
+            artifact: SkyrimPainter
+            suffix: ''
+          - flavour: vr      # Skyrim VR
+            vr: 'ON'
+            artifact: SkyrimPainter-VR
+            suffix: '-vr'
     env:
       # Current vcpkg checkout for its helper scripts/download URLs; the package versions
       # come from builtin-baseline in vcpkg.json, the same baseline the maintained CommonLibSSE-NG uses.
@@ -48,6 +61,7 @@ jobs:
           cmake -S . -B build -G "Visual Studio 17 2022" -A x64 `
             -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" `
             -DVCPKG_TARGET_TRIPLET=x64-windows-static-md `
+            -DSKYRIMPAINTER_VR=${{ matrix.vr }} `
             "-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded`$<`$<CONFIG:Debug>:Debug>DLL" 2>&1 | Tee-Object -FilePath logs/configure.txt
           if ($LASTEXITCODE -ne 0) { exit 1 }
 
@@ -73,13 +87,13 @@ jobs:
           }
           if (Test-Path build/vcpkg-manifest-install.log) { Copy-Item build/vcpkg-manifest-install.log logs/ }
           if (Test-Path build/CMakeFiles/CMakeOutput.log) { Copy-Item build/CMakeFiles/CMakeOutput.log logs/ }
-          "run ${{ github.run_id }} sha ${{ github.sha }} configure=${{ steps.configure.outcome }} build=${{ steps.build.outcome }}" | Out-File logs/STATUS.txt
+          "${{ matrix.flavour }} run ${{ github.run_id }} sha ${{ github.sha }} configure=${{ steps.configure.outcome }} build=${{ steps.build.outcome }}" | Out-File logs/STATUS.txt
           Copy-Item -Recurse logs $env:RUNNER_TEMP/logs-out
           cd $env:RUNNER_TEMP/logs-out
           git init -q -b ci-logs
           git config user.name "ci"; git config user.email "ci@users.noreply.github.com"
           git add -A; git commit -q -m "logs for run ${{ github.run_id }}"
-          git push -q -f "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}" ci-logs
+          git push -q -f "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}" HEAD:ci-logs${{ matrix.suffix }}
 
       - name: Fail if configure/build failed
         if: steps.configure.outcome != 'success' || steps.build.outcome != 'success'
@@ -113,17 +127,17 @@ jobs:
           git init -q -b dist
           git config user.name "ci"; git config user.email "ci@users.noreply.github.com"
           git add -A; git commit -q -m "SkyrimPainter build ${{ github.run_id }}"
-          git push -q -f "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}" dist
+          git push -q -f "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}" HEAD:dist${{ matrix.suffix }}
 
       - name: Upload package
         uses: actions/upload-artifact@v4
         with:
-          name: SkyrimPainter
+          name: ${{ matrix.artifact }}
           path: package/
 
       - name: Upload PDB
         uses: actions/upload-artifact@v4
         with:
-          name: SkyrimPainter-pdb
+          name: ${{ matrix.artifact }}-pdb
           path: build/Release/SkyrimPainter.pdb
           if-no-files-found: ignore
