@@ -1,0 +1,142 @@
+A suitable version of cmake was not found (required v3.31.10).
+Downloading https://github.com/Kitware/CMake/releases/download/v3.31.10/cmake-3.31.10-windows-x86_64.zip -> cmake-3.31.10-windows-x86_64.zip
+Successfully downloaded cmake-3.31.10-windows-x86_64.zip
+Extracting cmake...
+Detecting compiler hash for triplet x64-windows...
+Compiler found: C:/Program Files/Microsoft Visual Studio/2022/Enterprise/VC/Tools/MSVC/14.44.35207/bin/Hostx64/x64/cl.exe
+Detecting compiler hash for triplet x64-windows-static-md...
+Compiler found: C:/Program Files/Microsoft Visual Studio/2022/Enterprise/VC/Tools/MSVC/14.44.35207/bin/Hostx64/x64/cl.exe
+The following packages will be built and installed:
+    directxmath:x64-windows-static-md@2025-04-03
+    directxtk:x64-windows-static-md@2025-10-27
+    fmt:x64-windows-static-md@12.1.0
+    imgui[core,dx11-binding]:x64-windows-static-md@1.90#4
+    nlohmann-json:x64-windows-static-md@3.12.0#1
+    rapidcsv:x64-windows-static-md@8.90
+    simpleini:x64-windows-static-md@4.25
+    spdlog:x64-windows-static-md@1.16.0
+    stb:x64-windows-static-md@2024-07-29#1
+    toml11:x64-windows-static-md@4.4.0
+  * vcpkg-cmake:x64-windows@2024-04-23
+  * vcpkg-cmake-config:x64-windows@2024-05-23
+    xbyak:x64-windows-static-md@7.28
+Additional packages (*) will be modified to complete this operation.
+Restored 13 package(s) from D:\a\SkyrimPainter\SkyrimPainter\vcpkg-bincache in 454 ms. Use --debug to see more details.
+Installing 1/13 vcpkg-cmake-config:x64-windows@2024-05-23...
+Elapsed time to handle vcpkg-cmake-config:x64-windows: 1.91 ms
+vcpkg-cmake-config:x64-windows package ABI: 55db9005390b4e9ec8099f6b6245c12297d513345eab967f9465e77147085788
+Installing 2/13 vcpkg-cmake:x64-windows@2024-04-23...
+Elapsed time to handle vcpkg-cmake:x64-windows: 2.37 ms
+vcpkg-cmake:x64-windows package ABI: 718aa09c5d12b8cd61f907f49d00c69c4f790f1cb6711f1bc07966bbf3330bbf
+Installing 3/13 directxmath:x64-windows-static-md@2025-04-03...
+Elapsed time to handle directxmath:x64-windows-static-md: 4.17 ms
+directxmath:x64-windows-static-md package ABI: 60d712211c54366a6d6967c2db16e86e63ed83151128c1fc4daba9f3c4e89cbd
+Installing 4/13 directxtk:x64-windows-static-md@2025-10-27...
+Elapsed time to handle directxtk:x64-windows-static-md: 6.11 ms
+directxtk:x64-windows-static-md package ABI: b9a80a42d49a47ba908013e44f0aeaa40ad9eb497ab4913ace1aca668fd0c3f8
+Installing 5/13 fmt:x64-windows-static-md@12.1.0...
+Elapsed time to handle fmt:x64-windows-static-md: 4.94 ms
+fmt:x64-windows-static-md package ABI: 858c856f26ca8684f0bf5e64fca6b933b73c1512c86fe9cda06a2c38b48a2567
+Installing 6/13 imgui[core,dx11-binding]:x64-windows-static-md@1.90#4...
+Elapsed time to handle imgui:x64-windows-static-md: 3.94 ms
+imgui:x64-windows-static-md package ABI: 06e950fe5c471eab327a680fea534bdeb5f94dc3bd11b0f3bdf4a839a9995feb
+Installing 7/13 nlohmann-json:x64-windows-static-md@3.12.0#1...
+Elapsed time to handle nlohmann-json:x64-windows-static-md: 10.2 ms
+nlohmann-json:x64-windows-static-md package ABI: 5049a5b4cd02c88c6cee4870c2d9c5dea904f515ad73861b5f4f945a1b9b8cd8
+Installing 8/13 rapidcsv:x64-windows-static-md@8.90...
+Elapsed time to handle rapidcsv:x64-windows-static-md: 1.98 ms
+rapidcsv:x64-windows-static-md package ABI: 6f98f37a944280ae5fcaad93bb3a8015da488334160c29262635db7bc3004b37
+Installing 9/13 simpleini:x64-windows-static-md@4.25...
+Elapsed time to handle simpleini:x64-windows-static-md: 2.36 ms
+simpleini:x64-windows-static-md package ABI: 9cff4cb7e5e59c6e48369eb6c68a3a8735bb19cb968262601b7a85e23a656d20
+Installing 10/13 spdlog:x64-windows-static-md@1.16.0...
+Elapsed time to handle spdlog:x64-windows-static-md: 14.1 ms
+spdlog:x64-windows-static-md package ABI: 4f55540666bb71423cafa01f6cda48c76ac0547e6b7f976015abf95211898c1c
+Installing 11/13 stb:x64-windows-static-md@2024-07-29#1...
+Elapsed time to handle stb:x64-windows-static-md: 5.32 ms
+stb:x64-windows-static-md package ABI: c88e9bb599a5a4c46861b2be043df094847029323aebc40bd414b2bdc7cc6c12
+Installing 12/13 toml11:x64-windows-static-md@4.4.0...
+Elapsed time to handle toml11:x64-windows-static-md: 8.7 ms
+toml11:x64-windows-static-md package ABI: 8963431d10068537c7fd42ea028226a67651ffde24278ac3c5d1a861d0ddac41
+Installing 13/13 xbyak:x64-windows-static-md@7.28...
+Elapsed time to handle xbyak:x64-windows-static-md: 3.1 ms
+xbyak:x64-windows-static-md package ABI: c499e475e249f2b59b4c4e5da9d432b67a908954f52bdb000094c3a423769086
+Installed contents are licensed to you by owners. Microsoft is not responsible for, nor does it grant any licenses to, third-party packages.
+Packages installed in this vcpkg installation declare the following licenses:
+(MIT OR CC-PDDC)
+BSD-3-Clause
+MIT
+The DirectXMath package provides CMake targets:
+
+    find_package(directxmath CONFIG REQUIRED)
+    target_link_libraries(main PRIVATE Microsoft::DirectXMath)
+
+The DirectX Tool Kit for DX11 package provides CMake targets:
+
+    find_package(directxtk CONFIG REQUIRED)
+    target_link_libraries(main PRIVATE Microsoft::DirectXTK)
+
+The package fmt provides CMake targets:
+
+    find_package(fmt CONFIG REQUIRED)
+    target_link_libraries(main PRIVATE fmt::fmt)
+
+    # Or use the header-only version
+    find_package(fmt CONFIG REQUIRED)
+    target_link_libraries(main PRIVATE fmt::fmt-header-only)
+
+imgui provides CMake targets:
+
+  # this is heuristically generated, and may not be correct
+  find_package(imgui CONFIG REQUIRED)
+  target_link_libraries(main PRIVATE imgui::imgui)
+
+The package nlohmann-json provides CMake targets:
+
+    find_package(nlohmann_json CONFIG REQUIRED)
+    target_link_libraries(main PRIVATE nlohmann_json::nlohmann_json)
+
+The package nlohmann-json can be configured to not provide implicit conversions via a custom triplet file:
+
+    set(nlohmann-json_IMPLICIT_CONVERSIONS OFF)
+
+For more information, see the docs here:
+    
+    https://json.nlohmann.me/api/macros/json_use_implicit_conversions/
+
+rapidcsv is header-only and can be used from CMake via:
+
+  find_path(RAPIDCSV_INCLUDE_DIRS "rapidcsv.h")
+  target_include_directories(main PRIVATE ${RAPIDCSV_INCLUDE_DIRS})
+
+simpleini is header-only and can be used from CMake via:
+
+  find_path(SIMPLEINI_INCLUDE_DIRS "ConvertUTF.c")
+  target_include_directories(main PRIVATE ${SIMPLEINI_INCLUDE_DIRS})
+
+The package spdlog provides CMake targets:
+
+    find_package(spdlog CONFIG REQUIRED)
+    target_link_libraries(main PRIVATE spdlog::spdlog)
+
+    # Or use the header-only version
+    find_package(spdlog CONFIG REQUIRED)
+    target_link_libraries(main PRIVATE spdlog::spdlog_header_only)
+
+The package stb provides CMake targets:
+
+    find_package(Stb REQUIRED)
+    target_include_directories(main PRIVATE ${Stb_INCLUDE_DIR})
+toml11 provides CMake targets:
+
+  # this is heuristically generated, and may not be correct
+  find_package(toml11 CONFIG REQUIRED)
+  target_link_libraries(main PRIVATE toml11::toml11)
+
+xbyak provides CMake targets:
+
+  # this is heuristically generated, and may not be correct
+  find_package(xbyak CONFIG REQUIRED)
+  target_link_libraries(main PRIVATE xbyak::xbyak)
+
+All requested installations completed successfully in: 72.2 ms
