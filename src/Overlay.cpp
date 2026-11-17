@@ -743,20 +743,75 @@ namespace Overlay
 		return true;
 	}
 
+	namespace
+	{
+		// The game's own window, device and back buffer: for swap chains wrapped by other mods (frame generation,
+		// upscalers, ENB, ReShade) that don't hand out a D3D11 device or back buffer themselves.
+		RE::BSGraphics::RendererWindow* GameWindow()
+		{
+			auto* r = RE::BSGraphics::Renderer::GetSingleton();
+			return r ? &r->GetRuntimeData().renderWindows[0] : nullptr;
+		}
+
+		ID3D11Texture2D* GameBackBuffer()
+		{
+			auto* r = RE::BSGraphics::Renderer::GetSingleton();
+			auto* w = GameWindow();
+			const int rt = w ? static_cast<int>(w->swapChainRenderTarget) : -1;
+			if (!r || rt < 0 || rt >= static_cast<int>(RE::RENDER_TARGETS::kTOTAL)) {
+				return nullptr;
+			}
+			auto* tex = reinterpret_cast<ID3D11Texture2D*>(r->GetRuntimeData().renderTargets[rt].texture);
+			if (tex) {
+				tex->AddRef();
+			}
+			return tex;
+		}
+
+		int g_warned = 0;  // what went wrong, once each
+		void WarnOnce(int a_bit, const char* a_what)
+		{
+			if (!(g_warned & a_bit)) {
+				g_warned |= a_bit;
+				spdlog::warn("{}", a_what);
+			}
+		}
+	}
+
 	void OnPresent(IDXGISwapChain* a_sc)
 	{
+		static bool first = true;
+		if (first) {
+			first = false;
+			spdlog::info("Present called (swap chain {:X})", reinterpret_cast<std::uintptr_t>(a_sc));
+		}
 		if (!g_sc) {
 			DXGI_SWAP_CHAIN_DESC desc{};
-			if (FAILED(a_sc->GetDesc(&desc)) || !desc.OutputWindow) {
+			float                h = 0.0f;
+			if (SUCCEEDED(a_sc->GetDesc(&desc)) && desc.OutputWindow) {
+				h = static_cast<float>(desc.BufferDesc.Height);
+			} else if (auto* w = GameWindow(); w && w->windowHeight > 0) {
+				WarnOnce(1, "The swap chain has no description - using the game's window size");
+				h = static_cast<float>(w->windowHeight);
+			} else {
+				WarnOnce(2, "No window size yet");
 				return;
 			}
 			if (FAILED(a_sc->GetDevice(__uuidof(ID3D11Device), reinterpret_cast<void**>(&g_dev))) || !g_dev) {
-				return;
+				// a wrapped swap chain (e.g. frame generation): draw with the game's own device
+				auto* r = RE::BSGraphics::Renderer::GetSingleton();
+				g_dev = r ? reinterpret_cast<ID3D11Device*>(r->GetRuntimeData().forwarder) : nullptr;
+				if (!g_dev) {
+					WarnOnce(4, "No D3D11 device from the swap chain or the game");
+					return;
+				}
+				g_dev->AddRef();
+				WarnOnce(8, "The swap chain is wrapped by another mod - drawing with the game's device");
 			}
 			g_dev->GetImmediateContext(&g_ctx);
 			g_sc = a_sc;
-			g_displayH = static_cast<float>(desc.BufferDesc.Height);
-			spdlog::info("Attached to the game's swap chain ({}x{})", desc.BufferDesc.Width, desc.BufferDesc.Height);
+			g_displayH = h;
+			spdlog::info("Attached to the game's swap chain (height {})", h);
 		}
 		if (a_sc != g_sc) {
 			return;
@@ -791,7 +846,12 @@ namespace Overlay
 
 		ID3D11Texture2D* back = nullptr;
 		if (FAILED(a_sc->GetBuffer(0, __uuidof(ID3D11Texture2D), reinterpret_cast<void**>(&back))) || !back) {
-			return;
+			back = GameBackBuffer();  // a wrapped swap chain: draw into the game's own back buffer
+			if (!back) {
+				WarnOnce(16, "No back buffer to draw on, from the swap chain or the game");
+				return;
+			}
+			WarnOnce(32, "The swap chain gives no back buffer - drawing into the game's");
 		}
 		D3D11_TEXTURE2D_DESC bd{};
 		back->GetDesc(&bd);
