@@ -26,6 +26,8 @@ namespace Live
 	// Where the canvas's painted face is on screen, in pixels: top-left, top-right, bottom-right,
 	// bottom-left of the picture. False if the canvas isn't there or isn't in front of the camera.
 	bool CanvasOnScreen(std::uint32_t a_canvas, bool a_portrait, float a_screenW, float a_screenH, float a_out[4][2]);
+	// The painted face's corners in the world, at UV (0,0) (1,0) (1,1) (0,1)
+	bool CanvasCorners(std::uint32_t a_canvas, bool a_portrait, RE::NiPoint3 a_out[4]);
 
 	// The canvas shows the studio's own texture, so every stroke is seen on it as it is painted.
 	// a_dds is the session's own texture on that canvas (Items::ShowLive): only a texture of that name

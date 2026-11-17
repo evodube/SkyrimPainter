@@ -155,6 +155,19 @@ namespace Live
 		}
 	}
 
+	bool CanvasCorners(std::uint32_t a_canvas, bool a_portrait, RE::NiPoint3 a_out[4])
+	{
+		auto* geom = CanvasShape(Canvas(a_canvas));
+		if (!geom) {
+			return false;
+		}
+		const RE::NiTransform world = geom->world;
+		for (int i = 0; i < 4; ++i) {
+			a_out[i] = Corner(world, a_portrait, i);
+		}
+		return true;
+	}
+
 	bool CanvasOnScreen(std::uint32_t a_canvas, bool a_portrait, float a_screenW, float a_screenH, float a_out[4][2])
 	{
 		// the game's own view matrix and viewport (as TrueHUD uses them). The call's result is ignored on

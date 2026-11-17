@@ -29,7 +29,7 @@ add_commonlibsse_plugin(${PROJECT_NAME}
     AUTHOR "evodube"
     USE_ADDRESS_LIBRARY
     SOURCES src/main.cpp src/Art.cpp src/Dds.cpp src/Items.cpp src/Menus.cpp src/Overlay.cpp src/Paint.cpp src/Place.cpp
-            src/Spectral.cpp src/Store.cpp src/Studio.cpp src/Theme.cpp src/Live.cpp)
+            src/Spectral.cpp src/Store.cpp src/Studio.cpp src/Theme.cpp src/Live.cpp src/VR.cpp)
 
 target_include_directories(${PROJECT_NAME} PRIVATE src ${STB_INCLUDE_DIRS})
 target_precompile_headers(${PROJECT_NAME} PRIVATE src/PCH.h)
