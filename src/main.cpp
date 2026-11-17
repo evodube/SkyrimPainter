@@ -54,28 +54,79 @@ namespace
 		}
 	}
 
+	std::atomic<std::uint64_t> g_presents{ 0 };
+	thread_local int           t_inPresent = 0;  // Present1 may call Present (or the other way round): draw once
+
 	HRESULT STDMETHODCALLTYPE HookedPresent(IDXGISwapChain* a_sc, UINT a_sync, UINT a_flags)
 	{
-		if (!g_presentDisabled) {
+		++g_presents;
+		if (!g_presentDisabled && t_inPresent++ == 0) {
 			SafeOnPresent(a_sc);
 		}
-		return g_originalPresent(a_sc, a_sync, a_flags);
+		const HRESULT hr = g_originalPresent(a_sc, a_sync, a_flags);
+		--t_inPresent;
+		return hr;
 	}
+
+	using Present1Fn = HRESULT(STDMETHODCALLTYPE*)(IDXGISwapChain1*, UINT, UINT, const DXGI_PRESENT_PARAMETERS*);
+	Present1Fn g_originalPresent1 = nullptr;
+
+	HRESULT STDMETHODCALLTYPE HookedPresent1(IDXGISwapChain1* a_sc, UINT a_sync, UINT a_flags, const DXGI_PRESENT_PARAMETERS* a_params)
+	{
+		++g_presents;
+		if (!g_presentDisabled && t_inPresent++ == 0) {
+			SafeOnPresent(a_sc);
+		}
+		const HRESULT hr = g_originalPresent1(a_sc, a_sync, a_flags, a_params);
+		--t_inPresent;
+		return hr;
+	}
+
+	std::string ModuleOf(const void* a_addr)
+	{
+		HMODULE mod = nullptr;
+		char    name[MAX_PATH]{};
+		if (::GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT, static_cast<LPCSTR>(a_addr), &mod) && mod &&
+			::GetModuleFileNameA(mod, name, MAX_PATH)) {
+			const char* slash = std::strrchr(name, '\\');
+			return slash ? slash + 1 : name;
+		}
+		return "?";
+	}
+
+	bool PatchSlot(void** a_vtable, int a_slot, void* a_hook, void** a_original)
+	{
+		if (a_vtable[a_slot] == a_hook) {
+			return true;
+		}
+		DWORD old = 0;
+		if (!::VirtualProtect(&a_vtable[a_slot], sizeof(void*), PAGE_EXECUTE_READWRITE, &old)) {
+			spdlog::error("VirtualProtect failed ({})", ::GetLastError());
+			return false;
+		}
+		*a_original = a_vtable[a_slot];
+		a_vtable[a_slot] = a_hook;
+		::VirtualProtect(&a_vtable[a_slot], sizeof(void*), old, &old);
+		return true;
+	}
+
+	IDXGISwapChain* g_hookedSc = nullptr;
 
 	bool PatchPresentSlot(IDXGISwapChain* a_sc)
 	{
 		auto** vtable = *reinterpret_cast<void***>(a_sc);
-		if (vtable[8] == reinterpret_cast<void*>(&HookedPresent)) {
-			return true;
-		}
-		DWORD old = 0;
-		if (!::VirtualProtect(&vtable[8], sizeof(void*), PAGE_EXECUTE_READWRITE, &old)) {
-			spdlog::error("VirtualProtect failed ({})", ::GetLastError());
+		spdlog::info("Swap chain {:X}: Present is in {}", reinterpret_cast<std::uintptr_t>(a_sc), ModuleOf(vtable[8]));
+		if (!PatchSlot(vtable, 8, reinterpret_cast<void*>(&HookedPresent), reinterpret_cast<void**>(&g_originalPresent))) {
 			return false;
 		}
-		g_originalPresent = reinterpret_cast<PresentFn>(vtable[8]);
-		vtable[8] = reinterpret_cast<void*>(&HookedPresent);
-		::VirtualProtect(&vtable[8], sizeof(void*), old, &old);
+		// Present1 too: some swap chain wrappers present through it
+		IDXGISwapChain1* sc1 = nullptr;
+		if (SUCCEEDED(a_sc->QueryInterface(__uuidof(IDXGISwapChain1), reinterpret_cast<void**>(&sc1))) && sc1) {
+			auto** vt1 = *reinterpret_cast<void***>(sc1);
+			PatchSlot(vt1, 22, reinterpret_cast<void*>(&HookedPresent1), reinterpret_cast<void**>(&g_originalPresent1));
+			sc1->Release();
+		}
+		g_hookedSc = a_sc;
 		return true;
 	}
 
@@ -105,6 +156,32 @@ namespace
 				const auto& dbg = Overlay::GetDebugSwitches();
 				if (dbg.hookPresent) {
 					spdlog::info(InstallPresentHook() ? "Present hook installed" : "Could not install the Present hook - the studio will not appear");
+					// Another mod may swap the game's swap chain for its own later (frame generation, upscalers):
+					// if frames stop coming through the hook, hook whatever the game presents with now.
+					std::thread([] {
+						int tries = 0;
+						for (std::uint64_t last = g_presents; tries < 20;) {
+							std::this_thread::sleep_for(std::chrono::seconds(3));
+							const std::uint64_t now = g_presents;
+							if (now != last) {
+								last = now;
+								continue;
+							}
+							++tries;
+							SKSE::GetTaskInterface()->AddTask([] {
+								IDXGISwapChain* sc = nullptr;
+								__try {
+									sc = GetGameSwapChain();
+								} __except (Overlay::SehFilter(GetExceptionInformation(), "GetGameSwapChain")) {
+									sc = nullptr;
+								}
+								if (sc && (sc != g_hookedSc || (*reinterpret_cast<void***>(sc))[8] != reinterpret_cast<void*>(&HookedPresent))) {
+									spdlog::info("No frames through the Present hook - hooking the game's swap chain again");
+									PatchPresentSlot(sc);
+								}
+							});
+						}
+					}).detach();
 				}
 				if (dbg.inputSink) {
 					spdlog::info(Overlay::InstallInputSink() ? "Input sink registered" : "Could not register for input events");
