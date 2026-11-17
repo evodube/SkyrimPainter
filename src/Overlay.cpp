@@ -736,7 +736,7 @@ namespace Overlay
 			return;
 		}
 		// BSInputDeviceManager::PollInputDevices -> the call that sends the input events to all listeners.
-		REL::Relocation<std::uintptr_t> target{ REL::RelocationID(67315, 68617), REL::VariantOffset(0x7B, 0x7B, 0x81) };
+		REL::Relocation<std::uintptr_t> target{ REL::RelocationID(67315, 68617), REL::VariantOffset(0x7B, 0x81, 0x7B) };
 		const auto*                     code = reinterpret_cast<const std::uint8_t*>(target.address());
 		if (*code != 0xE8) {
 			spdlog::warn("Input blocker: unexpected code at {:X} ({:02X}) - other mods' hotkeys can still fire in the studio", target.address(), *code);
