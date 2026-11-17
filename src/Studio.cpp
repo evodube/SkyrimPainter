@@ -1789,6 +1789,17 @@ namespace Studio
 			if (ImGui::IsKeyPressed(ImGuiKey_Tab, false)) {
 				g_hideHud = !g_hideHud;
 			}
+			// Z zooms whenever: between strokes or in the middle of one
+			if (ImGui::IsKeyPressed(ImGuiKey_Z, false) && !io.KeyCtrl) {
+				if (g_closeUp) {  // the close-up: 125%, or back to the whole canvas
+					const bool in = std::fabs(g_zoom - 1.25f) > 0.01f;
+					g_zoom = in ? 1.25f : 1.0f;
+					g_pan = ImVec2(0.0f, 0.0f);
+				} else {  // on the easel: look 25% closer, or back
+					g_worldZoom = !g_worldZoom;
+					Live::SetZoom(g_worldZoom);
+				}
+			}
 			if (!g_painting) {
 				if (ImGui::IsKeyPressed(ImGuiKey_LeftBracket) && g_brush.type >= 0) {
 					g_brush.size = std::max(0, g_brush.size - 1);
@@ -1826,16 +1837,6 @@ namespace Studio
 				}
 				if (ImGui::IsKeyPressed(ImGuiKey_M, false) && g_closeUp) {
 					g_mirror = !g_mirror;
-				}
-				if (ImGui::IsKeyPressed(ImGuiKey_Z, false) && !io.KeyCtrl) {
-					if (g_closeUp) {  // the close-up: 125%, or back to the whole canvas
-						const bool in = std::fabs(g_zoom - 1.25f) > 0.01f;
-						g_zoom = in ? 1.25f : 1.0f;
-						g_pan = ImVec2(0.0f, 0.0f);
-					} else {  // on the easel: look 25% closer, or back
-						g_worldZoom = !g_worldZoom;
-						Live::SetZoom(g_worldZoom);
-					}
 				}
 				if (ImGui::IsKeyPressed(ImGuiKey_C, false) && !io.KeyCtrl) {
 					g_closeUp = !g_closeUp;
